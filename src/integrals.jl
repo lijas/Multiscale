@@ -29,14 +29,19 @@ function integrate_fλu!(result::DiffResult, y::Vector{T}, cv_u::CellVectorValue
     return result
 end
 
-function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVectorValues, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, ae::Vector{T}) where {dim,T}
+function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, ae::Vector{T}) where {dim,T}
     for iqp in 1:getnquadpoints(cv_u)
         
         dV = getdetJdV(cv_u, iqp)
         
         ∇u = function_gradient(cv_u, iqp, ae)
         ε = symmetric(∇u)
-        σ, C, state[iqp] = material_response(material, ε, state[iqp])
+        
+        if dim == 2
+            σ, C, state[iqp] = material_response(PlaneStrain(), material, ε, state[iqp])
+        else
+            σ, C, state[iqp] = material_response(material, ε, state[iqp])
+        end
         
         for i in 1:getnbasefunctions(cv_u)
             ∇Ni = shape_gradient(cv_u, iqp, i)

@@ -3,12 +3,15 @@ module MultiScale
 
 using MaterialModels
 using Ferrite
+using Tensors
 using ForwardDiff
 using DiffResults: DiffResult
 using SparseArrays
+using Random, Distributions
 
 include("integrals.jl")
 include("extra_materials.jl")
+include("sampledomain.jl")
 
 #=struct ShellPartFe2
 
@@ -191,15 +194,10 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType = WEA
     #Get size of rve
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
 
-    #Periodic boundaries
-    Γ⁺ = getfaceset(grid, "right")
-    Γ⁻ = getfaceset(grid, "left")
-    if dim == 3
-        union!(Γ⁺, getfaceset(grid, "front"))
-        union!(Γ⁻, getfaceset(grid, "back"))
-    end
-    addfaceset!(grid, "Γ⁺", Γ⁺)
-    addfaceset!(grid, "Γ⁻", Γ⁻)
+    @assert( haskey(grid.facesets, "Γ⁺") )
+    @assert( haskey(grid.facesets, "Γ⁻") )
+    Γ⁺ = getfaceset(grid, "Γ⁺")
+    Γ⁻ = getfaceset(grid, "Γ⁻")
 
     #Dofhandler
     dh = DofHandler(grid)
@@ -213,10 +211,13 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType = WEA
     end    
     close!(ch)
 
+    celltype = getcelltype(grid)
+    ip_u = Ferrite.default_interpolation(celltype)
+    refshape = Ferrite.getrefshape(ip_u)
+
     #Element
-    ip_u = Lagrange{dim,RefCube,1}()
-    qr   = QuadratureRule{dim,RefCube}(2)
-    qr_face   = QuadratureRule{dim-1,RefCube}(2)
+    qr   = QuadratureRule{dim,refshape}(2)
+    qr_face   = QuadratureRule{dim-1,refshape}(2)
 
     cv_u = CellVectorValues(qr, ip_u)
     fv_u = FaceVectorValues(qr_face, ip_u)

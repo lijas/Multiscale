@@ -63,7 +63,11 @@ function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Ve
         z = xyz[dim]
         ε   = symmetric( function_gradient(cv, qp, ae) )
 
-        σ, _, _ = material_response(material, ε, states[qp])
+        if dim == 2
+            σ, _, _ = material_response(PlaneStrain(), material, ε, states[qp])
+        else
+            σ, _, _  = material_response(material, ε, states[qp])
+        end
 
         σₚ = SymmetricTensor{2,dim-1,Float64}((i,j) -> σ[i,j])
         σz = Vec{dim-1,Float64}((i) -> σ[i,dim])
