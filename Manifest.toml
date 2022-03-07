@@ -141,6 +141,12 @@ repo-url = "https://github.com/Ferrite-FEM/FerriteGmsh.jl.git"
 uuid = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 version = "0.1.0"
 
+[[deps.FileIO]]
+deps = ["Pkg", "Requires", "UUIDs"]
+git-tree-sha1 = "80ced645013a5dbdc52cf70329399c35ce007fae"
+uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+version = "1.13.0"
+
 [[deps.FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
 git-tree-sha1 = "deed294cde3de20ae0b2e0355a6c4e1c6a5ceffc"
@@ -184,6 +190,12 @@ version = "0.1.2"
 git-tree-sha1 = "7fd44fd4ff43fc60815f8e764c0f352b83c49151"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
 version = "0.1.1"
+
+[[deps.JLD2]]
+deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "Pkg", "Printf", "Reexport", "TranscodingStreams", "UUIDs"]
+git-tree-sha1 = "28b114b3279cdbac9a61c57b3e6548a572142b34"
+uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+version = "0.4.21"
 
 [[deps.JLLWrappers]]
 deps = ["Preferences"]
