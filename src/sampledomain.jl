@@ -1,6 +1,8 @@
-using Random, Distributions, Tensors
-using Plots, Ferrite
-plotly()
+export AABB, SampleDomain, Inclusion
+export generate_random_domain, cutout_inplane_subdomain, get_qp_domaintags
+
+
+#using Plots; plotly()
 
 const INCLUSION=1 
 const MATRIX=2
@@ -10,30 +12,26 @@ struct AABB{dim}
     lengths::Vec{dim, Float64}
 end
 
-function AABB(c::Vec{dim,Float64}, l::Vec{dim,Float64}) where dim
-    return AABB{dim}(c,l)
-end
+offset_aabb(a::AABB{dim}, offset::Vec{dim}) where dim = AABB(a.corner - offset, a.lengths)
 
 minx(a::AABB) = a.corner[1]
 miny(a::AABB) = a.corner[2]
+minz(a::AABB) = a.corner[3]
 maxx(a::AABB) = a.corner[1] + a.lengths[1]
 maxy(a::AABB) = a.corner[2] + a.lengths[2]
+maxz(a::AABB) = a.corner[3] + a.lengths[3]
+
+height(a::AABB{dim}) where dim = a.lengths[dim]
 
 mincoord(a::AABB; dim::Int) = a.corner[dim]
 maxcoord(a::AABB; dim::Int) = a.corner[dim] + a.lengths[dim]
-
-struct GradedElasticMaterial{N}
-    Es::NTuple{N,Float64}
-    νs::NTuple{N,Float64}
-end
-
-struct GradedElasticMaterialState{N}
-    domaintag::NTuple{N,Int}
-end
-
 struct Inclusion{dim}
     radius::Float64
     pos::Vec{dim,Float64}
+    function Inclusion(radius::Float64, pos::Vec{dim,Float64}) where dim
+        @assert radius > 0.0
+        return new{dim}(radius, pos)
+    end
 end
 
 struct SampleDomain{dim}
@@ -41,16 +39,31 @@ struct SampleDomain{dim}
     domain::AABB{dim}
 end
 
+function offset_domain(sd::SampleDomain, offset)
+
+    new_spheres = similar(sd.inclusions)
+
+    for i in 1:length(sd.inclusions) 
+        r = sd.inclusions[i].radius
+        pos = sd.inclusions[i].pos - offset
+        new_spheres[i] = Inclusion(r, pos)
+    end
+
+    return SampleDomain( new_spheres, offset_aabb(sd.domain, offset))
+end
+
+
 SampleDomain(aabb::AABB{dim}) where dim = SampleDomain{dim}(Inclusion{dim}[], aabb)
 
 
 include("gmshdomain.jl")
 
 function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusions::Int; max_ntries::Int = ninclusions*10) where dim
+    @assert( radius_μ - radius_σ > 0.0)
 
     inclusions = Inclusion{dim}[]
     
-    ndradius = Normal(radius_μ, radius_σ)
+    ndradius = Uniform(radius_μ - radius_σ, radius_μ + radius_σ) #Normal(radius_μ, radius_σ)
     udpos = ntuple(d -> Uniform( mincoord(aabb, dim=d), maxcoord(aabb, dim=d)), dim)
     
     nadded = 0
@@ -58,10 +71,9 @@ function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusio
     while nadded < ninclusions
         pos_test = generate_random_position(udpos)
         radius_test = generate_random_radius(ndradius)
-        
         new_inclusion = Inclusion(radius_test, pos_test)
 
-        if collides_with_other_inclusion(inclusions, new_inclusion)
+        if collides_with_other_inclusion(inclusions, new_inclusion) || inclusion_outside_domain(aabb, new_inclusion)
             if ntries > max_ntries
                 error("Could not distribute all voids: $nadded/$ninclusions")
             end
@@ -82,7 +94,7 @@ function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusio
 end
 
 generate_random_position(uniform::NTuple{dim, Uniform}) where dim = Vec{dim,Float64}( (d) -> rand(uniform[d]) )
-generate_random_radius(normal::Normal) where dim = rand(normal)
+generate_random_radius(normal::ContinuousUnivariateDistribution)= rand(normal)
 
 
 function collides_with_other_inclusion(inclusions::Vector{Inclusion{dim}}, new_inclusion::Inclusion) where dim
@@ -99,14 +111,45 @@ function collides_with_other_inclusion(inclusions::Vector{Inclusion{dim}}, new_i
     return false
 end
 
+function inclusion_outside_domain(aabb::AABB{dim}, a::Inclusion{dim}) where dim
+
+    for d in 1:dim
+        if (a.pos[d] - a.radius) < mincoord(aabb, dim = d)
+            return true
+        elseif (a.pos[d] + a.radius) > maxcoord(aabb, dim = d)
+            return true
+        end
+    end
+    return false
+end
+
 function cutout_subdomain(sd::SampleDomain{dim}, L◫::Float64) where dim
     udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d)), dim)
 
     h = L◫
-    size = Vec{dim,Float64}( d -> d==3 ? h : L◫ )
+    size = Vec{dim,Float64}( d -> d==dim ? h : L◫ )
     x = generate_random_position(udpos)
    
     sub_aabb = AABB(x - 0.5*size , size)
+    subdomain = SampleDomain(sub_aabb)
+
+    for sphere in sd.inclusions
+        if sphere_inside_aabb(sphere, sub_aabb)
+            push!(subdomain.inclusions, sphere)
+        end
+    end
+    @show length(subdomain.inclusions)
+    return subdomain
+end
+
+function cutout_inplane_subdomain(sd::SampleDomain{dim}, L◫::Float64) where dim
+    h = height(sd.domain)
+    udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d)), dim-1)
+
+    size  = Vec{dim}( d -> d==dim ? h : L◫ )
+    coord = Vec{dim}( d -> d!=dim ? rand(udpos[d]) : mincoord(sd.domain; dim=d) )
+   
+    sub_aabb = AABB(coord , size)
     subdomain = SampleDomain(sub_aabb)
 
     for sphere in sd.inclusions
@@ -136,7 +179,18 @@ end
 
 
 
-function do_stuff(grid::Grid, sd::SampleDomain, cv::Ferrite.Values)
+function get_qp_domaintags(grid::Grid, sd::SampleDomain{dim}, cv::Ferrite.Values) where dim
+    @assert(dim == 2)
+
+    #The sample domain and grid might not be locateted in same place in space
+    #Offset the sample domain...
+    xcorner = minimum(n->n.x[1], grid.nodes)
+    ycorner = minimum(n->n.x[2], grid.nodes)
+
+    xoffset = sd.domain.corner[1] - xcorner
+    yoffset = sd.domain.corner[2] - ycorner
+
+    sd = offset_domain(sd, Vec((xoffset, yoffset)))
 
     #id = default_cellvalues(grid)
     cellquaddomains = zeros(Int, getnquadpoints(cv), getncells(grid))
@@ -165,7 +219,7 @@ function inside_domain(x::Vec{dim,Float64}, sd::SampleDomain{dim}) where dim
     return MATRIX
 end
 
-plotdomain(sd::SampleDomain) = plotdomain!(plot(reuse=false, legend=false, axis_equal=true), sd)
+plotdomain(sd::SampleDomain; kwargs...) = plotdomain!(plot(;kwargs...), sd)
 
 function plotdomain!(fig, sd::SampleDomain{2})
 
@@ -181,18 +235,32 @@ function plotdomain!(fig, sd::SampleDomain{2})
     return fig
 end
 
-function plotcircle!(fig, (x,y)::Vec{2,Float64},r::Float64; kwargs...)
+function plotdomain!(fig, sd::SampleDomain{3})
+
+    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
+    plot3d!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
+    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [maxy(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
+    plot3d!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
+
+    for hole in sd.inclusions
+        scatter3d!(fig, [hole.pos[1]], [hole.pos[2]], [hole.pos[3]]; markershape = :circle, markersize = hole.radius*10)
+    end
+
+    return fig
+end
+
+function plotcircle!(fig, (x,y)::Vec{2,Float64}, r::Float64; kwargs...)
     θ = range(0, 2π, 20)
-    xc = x .+ r*sin.(θ)
-    yc = y .+ r*cos.(θ)
+    xc = x .+ r*cos.(θ)
+    yc = y .+ r*sin.(θ)
     plot!(fig, xc, yc; kwargs...)
 end
 
 
-function test()
+function test2d()
 
     dim = 2
-    sd = generate_random_domain( AABB( Vec(0.0,0.0), Vec(10.0,10.0)), 0.5, 0.1, 60)
+    sd = generate_random_domain( AABB( Vec(0.0,0.0), Vec(10.0,10.0)), 0.5, 0.1, 50)
     
     L◫ = 2.0
     subd = cutout_subdomain(sd, L◫)
@@ -202,7 +270,7 @@ function test()
     qr = QuadratureRule{2,RefCube}(2)
     cv = CellScalarValues(qr, ip)
 
-    cellquadpoints = do_stuff(grid, subd, cv)
+    cellquadpoints = get_qp_domaintags(grid, subd, cv)
 
     fig = plotdomain(sd)
     plotdomain!(fig, subd)
@@ -232,7 +300,7 @@ function test3d()
     nels = ntuple(d -> d, 30)
     celltype = (dim==2) ? Quadrilateral : Hexahedron
 
-    sd = generate_random_domain( AABB(domaincoord, domainsize), 0.5, 0.1, 100)
+    sd = generate_random_domain( AABB(domaincoord, domainsize), 1.0, 0.1, 20, max_ntries = 10000)
     
     L◫ = 5.0
     subd = cutout_subdomain(sd, L◫)
@@ -244,9 +312,9 @@ function test3d()
 
     cellquadpoints = do_stuff(grid, subd, cv)
 
-    #fig = plotdomain(sd)
+    fig = plotdomain(sd)
     #plotdomain!(fig, subd)
-    #display(fig)
+    display(fig)
 
     celldomains = [round(Int, mean(col)) for col in eachcol(cellquadpoints)]
     set = collect(1:getncells(grid))[celldomains .== INCLUSION]
@@ -262,3 +330,5 @@ function test3d()
     end
 
 end
+
+
