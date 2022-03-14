@@ -1,6 +1,6 @@
 export AABB, SampleDomain, Inclusion
 export generate_random_domain, cutout_inplane_subdomain, get_qp_domaintags
-
+export plotdomain, plotdomain!, plotdomain_topview!, plotdomain_sideview!
 
 #using Plots; plotly()
 
@@ -87,9 +87,6 @@ function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusio
 
     end
 
-    @show (nadded)
-    @show (ntries)
-    @show length(inclusions)
     return SampleDomain(inclusions, aabb)
 end
 
@@ -179,18 +176,15 @@ end
 
 
 
-function get_qp_domaintags(grid::Grid, sd::SampleDomain{dim}, cv::Ferrite.Values) where dim
-    @assert(dim == 2)
+function get_qp_domaintags(grid::Grid{dim}, sd::SampleDomain{dim}, cv::Ferrite.Values) where dim
 
     #The sample domain and grid might not be locateted in same place in space
     #Offset the sample domain...
-    xcorner = minimum(n->n.x[1], grid.nodes)
-    ycorner = minimum(n->n.x[2], grid.nodes)
+    corner = Vec{dim}( d -> minimum(n->n.x[d], grid.nodes) )
 
-    xoffset = sd.domain.corner[1] - xcorner
-    yoffset = sd.domain.corner[2] - ycorner
+    offset = sd.domain.corner - corner
 
-    sd = offset_domain(sd, Vec((xoffset, yoffset)))
+    sd = offset_domain(sd, offset)
 
     #id = default_cellvalues(grid)
     cellquaddomains = zeros(Int, getnquadpoints(cv), getncells(grid))
@@ -244,6 +238,23 @@ function plotdomain!(fig, sd::SampleDomain{3})
 
     for hole in sd.inclusions
         scatter3d!(fig, [hole.pos[1]], [hole.pos[2]], [hole.pos[3]]; markershape = :circle, markersize = hole.radius*10)
+    end
+
+    return fig
+end
+
+plotdomain_topview!(fig, sd::SampleDomain{3}) =  _plotdomain_view!(fig, sd, 1, 2)
+plotdomain_sideview!(fig, sd::SampleDomain{3}) =  _plotdomain_view!(fig, sd, 1, 3)
+
+function _plotdomain_view!(fig, sd::SampleDomain{3}, d1, d2)
+
+    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), mincoord(sd.domain, dim=d2)], color="red" )
+    plot!(fig, [maxcoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
+    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [maxcoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
+    plot!(fig, [mincoord(sd.domain, dim=d1), mincoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
+
+    for hole in sd.inclusions
+        plotcircle!(fig, Vec((hole.pos[d1], hole.pos[d2])), hole.radius)
     end
 
     return fig

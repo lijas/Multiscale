@@ -44,3 +44,30 @@ function MaterialModels.material_response(m::TransverseIsotropy, ε::SymmetricTe
     return σ, E, TransverseIsotropyState(σ, state.a)
 
 end
+
+
+Base.@kwdef struct GradedElasticMaterial{N} <: MaterialModels.AbstractMaterial
+    Es::NTuple{N,Float64}
+    νs::NTuple{N,Float64}
+end
+
+struct GradedElasticMaterialState <: MaterialModels.AbstractMaterialState
+    domaintag::Int
+end
+
+function MaterialModels.initial_material_state(m::GradedElasticMaterial, tag::Int)
+    return GradedElasticMaterialState(tag)
+end
+
+function MaterialModels.material_response(m::GradedElasticMaterial{N}, ε::SymmetricTensor{2,3}, state::GradedElasticMaterialState, Δt=nothing; cache=nothing, options=nothing) where N
+
+    tag = state.domaintag
+    E = m.Es[tag]
+    ν = m.νs[tag]
+
+    material = LinearElastic(; E, ν)
+
+    σ, E, _ = material_response(material, ε, LinearElasticState())
+
+    return σ, E, state
+end
