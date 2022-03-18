@@ -55,9 +55,6 @@ end
 
 SampleDomain(aabb::AABB{dim}) where dim = SampleDomain{dim}(Inclusion{dim}[], aabb)
 
-
-include("gmshdomain.jl")
-
 function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusions::Int; max_ntries::Int = ninclusions*10) where dim
     @assert( radius_μ - radius_σ > 0.0)
 

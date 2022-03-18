@@ -1,5 +1,5 @@
 #http://jsdokken.com/converted_files/tutorial_gmsh.html
-using FerriteGmsh
+
 
 function addbox(a::AABB{2})
     mainbox = gmsh.model.occ.addRectangle(a.corner[1],a.corner[2], 0.0, a.lengths[1], a.lengths[2])

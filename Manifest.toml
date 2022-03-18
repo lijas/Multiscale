@@ -204,14 +204,6 @@ git-tree-sha1 = "a7b9df434e1f6dea61b995c7d087575a9938f622"
 uuid = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
 version = "0.3.4"
 
-[[deps.FerriteGmsh]]
-deps = ["Ferrite", "Reexport", "gmsh_jll"]
-git-tree-sha1 = "8c911e0f255b00ccd05b8decc65bd2826b2a05e4"
-repo-rev = "master"
-repo-url = "https://github.com/Ferrite-FEM/FerriteGmsh.jl.git"
-uuid = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
-version = "0.1.0"
-
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
 git-tree-sha1 = "80ced645013a5dbdc52cf70329399c35ce007fae"
@@ -1071,12 +1063,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "e45044cd873ded54b6a5bac0eb5c971392cf1927"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
 version = "1.5.2+0"
-
-[[deps.gmsh_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Pkg"]
-path = "/home/elias/.julia/dev/gmsh_jll"
-uuid = "630162c2-fc9b-58b3-9910-8442a8a132e6"
-version = "4.9.3+0"
 
 [[deps.libass_jll]]
 deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "HarfBuzz_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
