@@ -85,8 +85,8 @@ mutable struct Matrices
     fext_λ::Vector{Float64}
 end
 
-function Matrices(dh::DofHandler, nμ::Int, nλ::Int)
-    Kuu = create_sparsity_pattern(dh)#spzeros(Float64, ndofs(dh), ndofs(dh)) #create_sparsity_pattern(dh)
+function Matrices(dh::DofHandler, ch::ConstraintHandler, nμ::Int, nλ::Int)
+    Kuu = spzeros(Float64, ndofs(dh), ndofs(dh)) #create_sparsity_pattern(dh, ch)
     return Matrices(Kuu, spzeros(nμ, ndofs(dh)), spzeros(nλ, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, nμ), zeros(Float64, nλ))
 end
 
@@ -242,10 +242,10 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType) wher
     else
         error("Wrong BCTYPE")
     end
-    nλdofs = dim*2 - 1
+    nλdofs = dim-1#*2 - 1
     
     cache = RVECache(dim, nudofs, nμdofs, nλdofs)
-    matrices = Matrices(dh, nμdofs, nλdofs)
+    matrices = Matrices(dh, ch, nμdofs, nλdofs)
 
     #
     h = side_length[dim]
@@ -317,15 +317,15 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
         Γ_leftnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁻") )
         facepairs = ["right"=>"left"]
         if dim ==3
-            push!(facepairs, "front"=>"back")
+            push!(facepairs, "back"=>"front")
         end
         add_linear_constraints!(rve.ch, rve.grid, macroscale, facepairs, nodedofs, 1, rve.L◫[1])
     end
     close!(rve.ch)
     update!(rve.ch, 0.0)
     
-    #rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
-    assemble_volume!(rve, state)
+    @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
+    assemble_volume!(rve, macroscale, state)
     
 
     a = solve_it!(rve, state)
@@ -333,7 +333,7 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     return a
 end
 
-function assemble_volume!(rve::RVE, state::State)
+function assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
 
     fill!(rve.matrices.Kuu, 0.0)
     fill!(rve.matrices.Kλu, 0.0)
@@ -344,13 +344,13 @@ function assemble_volume!(rve::RVE, state::State)
         cellset = part.cellset
         matstates = state.partstates[partid].materialstates
 
-        _assemble!(rve, material, matstates, cellset, state.a)
+        _assemble!(rve, macroscale, material, matstates, cellset, state.a)
     end
 
 end
 
 
-function _assemble!(rve::RVE{dim}, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}) where {dim, MS<:AbstractMaterialState}
+function _assemble!(rve::RVE{dim}, macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}) where {dim, MS<:AbstractMaterialState}
 
     (; udofs, X, ae, fu, fλ, ke) = rve.cache
     (; grid, dh, cv_u)    = rve
@@ -383,19 +383,23 @@ function _assemble!(rve::RVE{dim}, material::AbstractMaterial, materialstates::V
         assemble!(assembler_u, udofs, ke, fu)
 
         #---
-        for d in 1:dim
+        #=for d in 1:dim
             fill!(fλ, 0.0)
             diffresult_λ = integrate_fλu!(diffresult_λ, fλ, cv_u, ae, d); 
             Ke = DiffResults.jacobian(diffresult_λ)
             matrices.Kλu[[d], udofs] += -Ke * (1/Ω◫)
-        end 
+        end =#
 
         for d in 1:dim-1
             fill!(fλ, 0.0)
             diffresult_λ = integrate_fλθ!(diffresult_λ, fλ, cv_u, X, ae, d); 
             Ke = DiffResults.jacobian(diffresult_λ)
-            matrices.Kλu[[dim+d], udofs] += Ke * (1/I◫)
+            matrices.Kλu[[d], udofs] += Ke * (1/I◫)
         end
+    end
+
+    for d in 1:dim-1
+        matrices.fext_λ[d] +=  -macroscale.θ[d]
     end
 
 end
@@ -457,11 +461,6 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         matrices.fext_μ[μdofs] += -fμ * (1/A◫)
     end
 
-    for d in 1:dim-1
-        matrices.fext_λ[d] +=  -macroscale.u[d]
-        matrices.fext_λ[dim+d] +=  -macroscale.θ[d] #-(macroscale.ϕ - macroscale.γ/2)
-    end
-    matrices.fext_λ[dim] +=  -macroscale.w
 end
 
 function solve_it!(rve::RVE, state::State)
@@ -503,7 +502,7 @@ function _solve_it_strong_periodic(rve::RVE, state::State)
     (; dh, ch, matrices)   = rve
     (; nμdofs, nλdofs) = rve
 
-    
+    #=
     fext_u = zeros(Float64, ndofs(ch.dh))
 
     K = vcat(hcat(matrices.Kuu, matrices.Kλu'),
@@ -512,68 +511,115 @@ function _solve_it_strong_periodic(rve::RVE, state::State)
     
     Ferrite._condense_sparsity_pattern!(K, ch.acs)
 
+    @show size(matrices.Kλu)
     apply!(K, f, ch)
     state.a .= K\f
+    @show state.a[end]
     apply!(state.a, ch)
-    #@show f[end-3:end], matrices.fext_λ
-    #@show atmp[end-3:end]
-    #@show norm(atmp) #0.3132241206725669
+    @show state.a[end]=#
+    #-0.06743940990516334 -0.038461538461538464
+   # state.a[end - 4:end] = [0.0023190336868656783, -3.2790763838489505e-5, -0.0049601617569132225, -0.1528202442617568, -0.0011312339754665324]
     
-    #=
+    nλdofs = rve.nλdofs 
+    nudofs = ndofs(ch.dh)
+
     K = matrices.Kuu
-    fext_u = zeros(Float64, ndofs(ch.dh))
+    RHS = zeros(Float64, nudofs, 1 + nλdofs)
+    fext_u = zeros(Float64, nudofs)
+    #Ferrite._condense_sparsity_pattern!(K, ch.acs)
 
     fλ = matrices.fext_λ
     C = copy(matrices.Kλu)
+    Ct = copy(matrices.Kλu)'
+    b = zeros(Float64, ndofs(ch.dh)); 
+    b[ch.prescribed_dofs] .= ch.inhomogeneities
+
     apply!(K, fext_u, ch)
-    Uλ = -K\C' 
-    @show Uλ
-    @show norm(Uλ)
-    for i in 1:size(Uλ, 2)
-        apply!( (@view Uλ[:,i]) , ch)
-    end
-    C2 = matrices.Kλu
-    λ = (C*Uλ)\fλ
-    @show fλ
-    @show (C*Uλ)
-    state.a .= Uλ*λ
-    apply!(state.a, ch) 
-    @show norm(state.a)
-    error("sdf")=#
+    condense_rhs!(Ct, ch) 
+    
+    RHS[:, 1] .= fext_u
+    RHS[:, (1:nλdofs) .+ 1] .= -Ct
+
+    @time LHS = K\RHS
+    ub = LHS[:,1]               # ub =  K\fext_u
+    Uλ = LHS[:,(1:nλdofs) .+ 1] # Uλ = -K\Ct 
+
+    ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
+
+    λ = (Ct'*Uλ)\(-C*b - Ct'*ub + fλ)
+
+    state.a[(1:nudofs)          ] .= ub + Uλ*λ
+    state.a[(1:nλdofs) .+ nudofs] .= λ
+
+    apply!(state.a, ch)
+
+    #=
+    T, b = Ferrite.create_constraint_matrix(ch)
+    ûb = (T'*K*T)\(-T'*K*b)
+    Uλ = (T'*K*T)\(-T'*C')
+    λ = (C*T*Uλ)\(-C*b - C*T*ûb + fλ)
+    =#
+    #apply!(state.a, ch) 
+    #@show norm(state.a)
+
+    #@show λ
+    #error("sdf")
 end
 
+function condense_rhs!(f::AbstractVecOrMat, ch::ConstraintHandler)
+    
+    acs = ch.acs
+    ndofs = size(f, 1)
+    distribute = Dict{Int,Int}(acs[c].constrained_dof => c for c in 1:length(acs))
+
+    for col in 1:ndofs
+        dcol = get(distribute, col, 0)
+        if dcol != 0
+            ac = acs[dcol]
+            for (d,v) in ac.entries
+                f[d,:] += f[col,:] * v
+            end
+            @assert ac.constrained_dof == col
+            f[ac.constrained_dof,:] .= 0.0
+        end
+    end
+end
 
 function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, macroscale::MacroParameters, facepairs::Vector{<:Pair}, nodedofs::Matrix{Int}, dir::Int, L◫) where {dim,C,T}
 
 
     nodepairs = Dict{Int,Int}()
-
     Γ⁺_nodes = Int[]
     Γ⁻_nodes = Int[]
+
     dir = 0
+    masternodes = []
     for (Γ⁺_name, Γ⁻_name) in facepairs
+        
         dir += 1
         Γ⁺_nodes = collect(getnodeset(grid, Γ⁺_name))
         Γ⁻_nodes = collect(getnodeset(grid, Γ⁻_name))
-       # @show Γ⁺_nodes
-        #@show Γ⁻_nodes
 
         for nodeid_r in Γ⁺_nodes
 
             Xr = grid.nodes[nodeid_r].x
 
             Xoffset = Vec{dim,T}(i -> i==dir ? L◫ : 0.0)
+            found_pair = false
 
             for nodeid_l in Γ⁻_nodes
 
                 Xl = grid.nodes[nodeid_l].x
 
-                if isapprox(Xr, (Xl + Xoffset), atol = 1e-14) #Vec(-4.440892098500626e-16, 0.0) ≈ zero(Vec{2}) ?????
-
+                if isapprox(Xr, (Xl + Xoffset), atol = 1e-10) #Vec(-4.440892098500626e-16, 0.0) ≈ zero(Vec{2}) ?????
+                    
+                    found_pair = true
+                    
                     if haskey(nodepairs, nodeid_r) #Masternoded har constraint: alltså det är en hörnnod
                         nodeid_r′ = nodepairs[nodeid_r]
                         #@info "$nodeid_l => $nodeid_r, but $nodeid_r => $nodeid_r′, remapping $nodeid_l => $nodeid_r′."
                         nodepairs[nodeid_l] = nodeid_r′
+                        push!(masternodes, nodeid_r′)
                     elseif haskey(nodepairs, nodeid_l) && nodepairs[nodeid_l] == nodeid_r
                        # @info "$nodeid_l => $nodeid_r already in the set, skipping."
                     elseif haskey(nodepairs, nodeid_l)
@@ -582,9 +628,14 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
                         #@info "$nodeid_l => $nodeid_r "
                         push!(nodepairs, nodeid_l => nodeid_r)
                     end
-
+                    
+                    break;
                 end
 
+            end
+
+            if found_pair == false
+                error("No pair node found, $nodeid_r... minnorm")
             end
 
         end
@@ -596,7 +647,17 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
         if haskey(nodepairs, v)
             @info "masternode $v exisits as slave"
         end
-        @info "$k => $v"
+        #@info "$k => $v"
+    end
+
+    @info "check that no Γ- nodes has constraints"
+    for (Γ⁺_name, Γ⁻_name) in facepairs
+        Γ⁻_nodes = collect(getnodeset(grid, Γ⁻_name))
+        for n in Γ⁻_nodes
+            if !haskey(nodepairs, n)
+                @info "$n does not have a constraint"
+            end
+        end
     end=#
 
     for (nodeid_s, nodeid_m) in nodepairs
@@ -626,6 +687,17 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
         #add!(ch, Dirichlet(:u, Set([nodeid_r]), (x,t)->b[dim], [dim]))
 
     end
+
+    #Lock a master node
+    lock_masternode = -1
+    if length(masternodes) == 0
+        @assert dim == 2
+        lock_masternode = first(nodepairs)[2] #Pick the first dof on Γ+
+    else
+        lock_masternode = first(masternodes)
+    end
+    
+    add!(ch, Ferrite.Dirichlet(:u, Set([lock_masternode]), (x,t) -> zero(Vec{dim}), 1:dim))
 
 end
 
