@@ -303,7 +303,6 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
     if rve.BC_TYPE == WEAK_PERIODIC
         assemble_face!(rve, macroscale, state.a)
 
-        addnodeset!(rve.grid, "cornerset", (x) -> all(x .≈ rve.L◫./2))
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
