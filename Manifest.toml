@@ -200,7 +200,9 @@ version = "4.4.0+0"
 
 [[deps.Ferrite]]
 deps = ["LinearAlgebra", "NearestNeighbors", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
-git-tree-sha1 = "a7b9df434e1f6dea61b995c7d087575a9938f622"
+git-tree-sha1 = "5a57d372bd2e28a711657adf94d9a1c81262aca3"
+repo-rev = "eb_condense"
+repo-url = "https://github.com/Ferrite-FEM/Ferrite.jl.git"
 uuid = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
 version = "0.3.4"
 

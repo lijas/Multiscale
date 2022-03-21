@@ -286,6 +286,13 @@ function State(rve::RVE, partstates::Vector{RVESubPartState})
 end
 
 function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) where dim
+    _apply_macroscale!(rve, macroscale, state)
+    _assemble_volume!(rve, macroscale, state)
+    a = solve_it!(rve, state)
+    return a
+end
+
+function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::State) where dim
 
     ∇u = increase_dim(macroscale.∇u)
     ∇θ = increase_dim(macroscale.∇θ)
@@ -295,6 +302,16 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
 
     if rve.BC_TYPE == WEAK_PERIODIC
         assemble_face!(rve, macroscale, state.a)
+
+        addnodeset!(rve.grid, "cornerset", (x) -> all(x .≈ rve.L◫./2))
+        dbc = Ferrite.Dirichlet(
+            :u,
+            getnodeset(rve.grid, "cornerset"),
+            (x, t) -> zero(Vec{dim,Float64}),
+            1:dim#(dim-1)
+        )
+        add!(rve.ch, dbc)
+
     elseif rve.BC_TYPE == DIRICHLET
         x̄ = zero(Vec{dim})
 
@@ -324,16 +341,11 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     close!(rve.ch)
     update!(rve.ch, 0.0)
     
-    @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
-    assemble_volume!(rve, macroscale, state)
-    
+    rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
 
-    a = solve_it!(rve, state)
-
-    return a
 end
 
-function assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
+function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
 
     fill!(rve.matrices.Kuu, 0.0)
     fill!(rve.matrices.Kλu, 0.0)
@@ -464,62 +476,94 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
 end
 
 function solve_it!(rve::RVE, state::State)
-
-    if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
-        _solve_it_strong_periodic(rve, state)
-    elseif rve.BC_TYPE == WEAK_PERIODIC
-        _solve_it_weak_periodic(rve, state)
-    else
-        error("WRONG BC_TYPE")
-    end
-
+    _solve_it_full!(rve::RVE, state::State)
+    #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
+    #    _solve_it_strong_periodic(rve, state)
+    #elseif rve.BC_TYPE == WEAK_PERIODIC
+    #    _solve_it_weak_periodic(rve, state)
+    #else
+    #    error("WRONG BC_TYPE")
+    #end
 end
 
-function _solve_it_weak_periodic(rve::RVE, state::State)
+function _solve_it_schur!(rve::RVE, state::State)
 
-    (; dh, matrices)   = rve
+    (; dh, ch,  matrices)   = rve
     (; nμdofs, nλdofs) = rve
 
-    K = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
-        hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
-        hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
+    nλdofs = rve.nλdofs 
+    nμdofs = rve.nμdofs 
+    nudofs = ndofs(ch.dh)
+    nλμdofs = nλdofs + nμdofs
 
-    fext_u = zeros(Float64, ndofs(dh))
-    f = vcat(fext_u, matrices.fext_μ, matrices.fext_λ)
+    K = matrices.Kuu
+    RHS = zeros(Float64, nudofs, 1 + nλdofs + nμdofs)
+    fext_u = zeros(Float64, nudofs)
+    #Ferrite._condense_sparsity_pattern!(K, ch.acs)
 
-    state.a .= K\f
+    fμλ = vcat(matrices.fext_μ, matrices.fext_λ)
+    C = vcat( matrices.Kμu, matrices.Kλu )
+    Ct = copy(C')
+    b = zeros(Float64, ndofs(ch.dh)); 
+    b[ch.prescribed_dofs] .= ch.inhomogeneities
 
-    #μdofs = (1:nμdofs) .+ ndofs(dh)
-    #λdofs = (1:nλdofs) .+ ndofs(dh) .+ nμdofs
+    apply!(K, fext_u, ch)
+    condense_rhs!(Ct, ch) 
+    
+    RHS[:, 1] .= fext_u
+    RHS[:, (1:nλμdofs) .+ 1] .= -Ct
 
-    #μ = a[μdofs]
-    #λ = a[λdofs]
+    @time LHS = K\RHS
+    ub = LHS[:,1]               # ub =  K\fext_u
+    Uλ = LHS[:,(1:(nλμdofs)) .+ 1] # Uλ = -K\Ct 
+
+    ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
+
+    μλ = (Ct'*Uλ)\(-C*b - Ct'*ub + fμλ)
+
+    state.a[(1:nudofs)           ] .= ub + Uλ*μλ
+    state.a[(1:nλμdofs) .+ nudofs] .= μλ
+
+    apply!(state.a, ch)
 end
 
-
-function _solve_it_strong_periodic(rve::RVE, state::State)
+function _solve_it_full!(rve::RVE, state::State)
 
     (; dh, ch, matrices)   = rve
     (; nμdofs, nλdofs) = rve
 
-    #=
     fext_u = zeros(Float64, ndofs(ch.dh))
 
-    K = vcat(hcat(matrices.Kuu, matrices.Kλu'),
-             hcat(matrices.Kλu, zeros(Float64, nλdofs, nλdofs)))
-    f = vcat(fext_u, matrices.fext_λ)
-    
-    Ferrite._condense_sparsity_pattern!(K, ch.acs)
+    KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
+              hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
+              hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
 
-    @show size(matrices.Kλu)
-    apply!(K, f, ch)
-    state.a .= K\f
-    @show state.a[end]
-    apply!(state.a, ch)
-    @show state.a[end]=#
-    #-0.06743940990516334 -0.038461538461538464
-   # state.a[end - 4:end] = [0.0023190336868656783, -3.2790763838489505e-5, -0.0049601617569132225, -0.1528202442617568, -0.0011312339754665324]
+    ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
     
+    Ferrite._condense_sparsity_pattern!(KK, ch.acs)
+
+    @info "test log 1.0"
+
+    apply!(KK, ff, ch)
+    time1 = @elapsed(state.a .= KK\ff)
+    apply!(state.a, ch)
+    @info "Solving the full sytem took $time1 seconds"
+end
+
+function _solve_it_weak_periodic(rve::RVE, state::State)
+
+    (; dh, ch, matrices)   = rve
+    (; nμdofs, nλdofs) = rve
+
+    KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
+        hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
+        hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
+
+    ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
+        
+        
+    aa .= KK\ff
+
     nλdofs = rve.nλdofs 
     nudofs = ndofs(ch.dh)
 
@@ -552,17 +596,84 @@ function _solve_it_strong_periodic(rve::RVE, state::State)
     state.a[(1:nλdofs) .+ nudofs] .= λ
 
     apply!(state.a, ch)
+    
+    #μdofs = (1:nμdofs) .+ ndofs(dh)
+    #λdofs = (1:nλdofs) .+ ndofs(dh) .+ nμdofs
+
+    #μ = a[μdofs]
+    #λ = a[λdofs]
+end
+
+
+function _solve_it_strong_periodic(rve::RVE, state::State)
+
+    (; dh, ch, matrices)   = rve
+    (; nμdofs, nλdofs) = rve
 
     #=
+    fext_u = zeros(Float64, ndofs(ch.dh))
+
+    K = vcat(hcat(matrices.Kuu, matrices.Kλu'),
+             hcat(matrices.Kλu, zeros(Float64, nλdofs, nλdofs)))
+    f = vcat(fext_u, matrices.fext_λ)
+    
+    Ferrite._condense_sparsity_pattern!(K, ch.acs)
+
+    @show size(matrices.Kλu)
+    apply!(K, f, ch)
+    state.a .= K\f
+    @show state.a[end-1:end]
+    apply!(state.a, ch)
+    @show state.a[end-1:end]=#
+    #state.a[end - 1:end] = [-0.1324798100769443, 4.184280901039025e-18]
+    #state.a[end - 1:end] = [-0.1324798100769443, 4.184280901039025e-18]
+    #-0.06743940990516334 -0.038461538461538464
+   # state.a[end - 4:end] = [0.0023190336868656783, -3.2790763838489505e-5, -0.0049601617569132225, -0.1528202442617568, -0.0011312339754665324]
+    
+   
+    nλdofs = rve.nλdofs 
+    nudofs = ndofs(ch.dh)
+
+    K = matrices.Kuu
+    RHS = zeros(Float64, nudofs, 1 + nλdofs)
+    fext_u = zeros(Float64, nudofs)
+    #Ferrite._condense_sparsity_pattern!(K, ch.acs)
+
+    fλ = matrices.fext_λ
+    C = copy(matrices.Kλu)
+    Ct = copy(matrices.Kλu)'
+    b = zeros(Float64, ndofs(ch.dh)); 
+    b[ch.prescribed_dofs] .= ch.inhomogeneities
+#=
+    apply!(K, fext_u, ch)
+    condense_rhs!(Ct, ch) 
+    
+    RHS[:, 1] .= fext_u
+    RHS[:, (1:nλdofs) .+ 1] .= -Ct
+
+    @time LHS = K\RHS
+    ub = LHS[:,1]               # ub =  K\fext_u
+    Uλ = LHS[:,(1:nλdofs) .+ 1] # Uλ = -K\Ct 
+
+    ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
+
+    λ = (Ct'*Uλ)\(-C*b - Ct'*ub + fλ)
+
+    state.a[(1:nudofs)          ] .= ub + Uλ*λ
+    state.a[(1:nλdofs) .+ nudofs] .= λ
+
+    apply!(state.a, ch)=#
+
+    
     T, b = Ferrite.create_constraint_matrix(ch)
     ûb = (T'*K*T)\(-T'*K*b)
     Uλ = (T'*K*T)\(-T'*C')
     λ = (C*T*Uλ)\(-C*b - C*T*ûb + fλ)
-    =#
-    #apply!(state.a, ch) 
+    apply!(state.a, ch) 
+    
     #@show norm(state.a)
 
-    #@show λ
+    @show λ
     #error("sdf")
 end
 

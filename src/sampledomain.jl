@@ -151,7 +151,7 @@ function cutout_inplane_subdomain(sd::SampleDomain{dim}, L◫::Float64) where di
             push!(subdomain.inclusions, sphere)
         end
     end
-    @show length(subdomain.inclusions)
+    
     return subdomain
 end
 
