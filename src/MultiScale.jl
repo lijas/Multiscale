@@ -476,7 +476,8 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
 end
 
 function solve_it!(rve::RVE, state::State)
-    _solve_it_full!(rve::RVE, state::State)
+    _solve_it_schur!(rve::RVE, state::State)
+    #_solve_it_full!(rve::RVE, state::State)
     #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
     #    _solve_it_strong_periodic(rve, state)
     #elseif rve.BC_TYPE == WEAK_PERIODIC
@@ -513,10 +514,11 @@ function _solve_it_schur!(rve::RVE, state::State)
     RHS[:, 1] .= fext_u
     RHS[:, (1:nλμdofs) .+ 1] .= -Ct
 
-    @time LHS = K\RHS
+    time1 = @elapsed(LHS = K\RHS)
     ub = LHS[:,1]               # ub =  K\fext_u
     Uλ = LHS[:,(1:(nλμdofs)) .+ 1] # Uλ = -K\Ct 
 
+    @info "Solving the full sytem took $time1 seconds"
     ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
 
     μλ = (Ct'*Uλ)\(-C*b - Ct'*ub + fμλ)
