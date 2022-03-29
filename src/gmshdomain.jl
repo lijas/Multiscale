@@ -24,7 +24,7 @@ function trim_edges(all, domain::AABB{2})
     h = domain.lengths[2]
 
     #Trim inclustions that are outside
-    cw = w*5
+    cw = max(w,h)*5
     cutleft  = gmsh.model.occ.addRectangle(x - cw,     y-cw/2, 0.0, cw, cw)
     cutright = gmsh.model.occ.addRectangle(x + w,      y-cw/2, 0.0, cw, cw)
     cuttop   = gmsh.model.occ.addRectangle(x,     y + h, 0.0, w, cw)
@@ -45,7 +45,7 @@ function trim_edges(all, domain::AABB{3})
     h = domain.lengths[3]
 
     #Trim inclustions that are outside
-    cw = w*5
+    cw = max(w, max(d, h))*5
     cutleft  = gmsh.model.occ.addBox(x - cw, y-cw/2, z - cw/2, cw, cw, cw)
     cutright = gmsh.model.occ.addBox(x + w , y-cw/2, z - cw/2, cw, cw, cw)
 
@@ -83,7 +83,7 @@ function get_domain_tag(a::AABB{3})
     gmsh.model.getEntitiesInBoundingBox(a.corner[1]-eps, a.corner[2]-eps, a.corner[3]-eps, a.corner[1] + a.lengths[1] + eps, a.corner[2] + a.lengths[2] + eps, a.corner[3] + a.lengths[3] + eps, 3)
 end
 
-function generate_gmsh(sd::SampleDomain{dim}) where dim
+function generate_gmsh(sd::SampleDomain{dim}, meshsize::Float64) where dim
 
     gmsh.initialize()
 
@@ -91,8 +91,8 @@ function generate_gmsh(sd::SampleDomain{dim}) where dim
 
     mainbox = addbox(sd.domain)
 
-    @show sd.domain
-    @show sd.inclusions
+    #@show sd.domain
+    #@show sd.inclusions
 
     holes = []
     holetags = []
@@ -118,15 +118,15 @@ function generate_gmsh(sd::SampleDomain{dim}) where dim
 
     newtag = get_domain_tag(sd.domain)
 
-    @show newtag
-    @show holetags
+    #@show newtag
+    #@show holetags
     grouptage1 = gmsh.model.addPhysicalGroup(dim, getindex.(holetags, 2))
     gmsh.model.setPhysicalName(dim, grouptage1, "inclusions")
     
     grouptage2 = gmsh.model.addPhysicalGroup(dim, getindex.(newtag, 2))
     gmsh.model.setPhysicalName(dim, grouptage2, "matrix")
 
-    lcar1 = sd.domain.lengths[end]/30
+    lcar1 = meshsize#sd.domain.lengths[end]/30
 
     ov = gmsh.model.getEntities(0);
     gmsh.model.mesh.setSize(ov, lcar1);
