@@ -479,7 +479,7 @@ end
 function solve_it!(rve::RVE, state::State)
     if rve.SOLVE_STYLE == SOLVE_FULL
         _solve_it_full!(rve::RVE, state::State)
-    else if rve.SOLVE_STYLE == SOLVE_SCHUR
+    elseif rve.SOLVE_STYLE == SOLVE_SCHUR
         _solve_it_schur!(rve::RVE, state::State)
     end
     #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
