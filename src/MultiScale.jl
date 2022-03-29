@@ -152,6 +152,7 @@ function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
 end
 
 @enum BCType WEAK_PERIODIC STRONG_PERIODIC DIRICHLET
+@enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
 struct RVE{dim}
 
@@ -182,6 +183,7 @@ struct RVE{dim}
 
     #
     BC_TYPE::BCType
+    SOLVE_STYLE::SolveStyle
     
 end
 
@@ -197,7 +199,7 @@ function rvesize(grid::Grid{dim}; dir=d) where dim
 
 end
 
-function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType) where dim
+function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLVE_STYLE::SolveStyle = SOLVE_FULL) where dim
 
     #Get size of rve
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
@@ -253,7 +255,7 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType) wher
     A◫ = Ω◫ / h
     I◫ = A◫*h^3/12
 
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE)
 end
 
 
@@ -475,7 +477,11 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
 end
 
 function solve_it!(rve::RVE, state::State)
-    _solve_it_full!(rve::RVE, state::State)
+    if rve.SOLVE_STYLE == SOLVE_FULL
+        _solve_it_full!(rve::RVE, state::State)
+    else if rve.SOLVE_STYLE == SOLVE_SCHUR
+        _solve_it_schur!(rve::RVE, state::State)
+    end
     #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
     #    _solve_it_strong_periodic(rve, state)
     #elseif rve.BC_TYPE == WEAK_PERIODIC
