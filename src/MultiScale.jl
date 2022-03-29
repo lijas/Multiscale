@@ -3,7 +3,7 @@ module MultiScale
 
 using MaterialModels
 using Ferrite
-#using FerriteGmsh
+using FerriteGmsh
 using Tensors
 using ForwardDiff
 using DiffResults: DiffResult
@@ -16,7 +16,7 @@ export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET
 include("integrals.jl")
 include("extra_materials.jl")
 include("sampledomain.jl")
-#include("gmshdomain.jl")
+include("gmshdomain.jl")
 
 #=struct ShellPartFe2
 
