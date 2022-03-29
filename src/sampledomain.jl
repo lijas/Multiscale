@@ -25,6 +25,8 @@ height(a::AABB{dim}) where dim = a.lengths[dim]
 
 mincoord(a::AABB; dim::Int) = a.corner[dim]
 maxcoord(a::AABB; dim::Int) = a.corner[dim] + a.lengths[dim]
+volume(a::AABB) = prod(a.lengths)::Float64
+
 struct Inclusion{dim}
     radius::Float64
     pos::Vec{dim,Float64}
@@ -33,6 +35,9 @@ struct Inclusion{dim}
         return new{dim}(radius, pos)
     end
 end
+
+volume(i::Inclusion{3}) = (4/3) * π * i.radius^3
+volume(i::Inclusion{2}) = π*i.radius^2
 
 struct SampleDomain{dim}
     inclusions::Vector{Inclusion{dim}}
@@ -54,6 +59,14 @@ end
 
 
 SampleDomain(aabb::AABB{dim}) where dim = SampleDomain{dim}(Inclusion{dim}[], aabb)
+
+function volumefraction(sd::SampleDomain)
+    volume_inclusions = 0.0
+    for inclu in sd.inclusions
+        volume_inclusions += volume(inclu)
+    end
+    return volume_inclusions / volume(sd.domain)
+end
 
 function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusions::Int; max_ntries::Int = ninclusions*10) where dim
     @assert( radius_μ - radius_σ > 0.0)
