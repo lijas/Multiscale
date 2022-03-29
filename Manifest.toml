@@ -208,7 +208,7 @@ version = "0.3.4"
 
 [[deps.FerriteGmsh]]
 deps = ["Ferrite", "Reexport", "gmsh_jll"]
-git-tree-sha1 = "502e8fe43ff4342e42207d8ecbdc76787970ef69"
+git-tree-sha1 = "8c911e0f255b00ccd05b8decc65bd2826b2a05e4"
 repo-rev = "master"
 repo-url = "https://github.com/Ferrite-FEM/FerriteGmsh.jl.git"
 uuid = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
