@@ -11,7 +11,7 @@ using SparseArrays
 using Random, Distributions
 using Plots: plot, plot!, scatter3d!, plot3d!
 
-export WEAK_PERIODIC, STRONG_PERIODIC, MODIFIED_DIRICHLET, RELAXED_DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET, RELAXED_DIRICHLET
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -34,7 +34,7 @@ struct RVESubPartState{MS<:MaterialModels.AbstractMaterialState}
     materialstates::Vector{Vector{MS}}
 end
 
-struct TractionInterpolation{dim} <: Ferrite.Interpolation end
+struct TractionInterpolation{dim} <: Ferrite.Interpolation{dim,RefCube,1} end
 
 function Ferrite.shape_value(::TractionInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
     dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
@@ -63,7 +63,7 @@ end
 Ferrite.getnbasefunctions(::TractionInterpolation{2}) = 3
 Ferrite.getnbasefunctions(::TractionInterpolation{3}) = 10
 
-struct RelaxedDirichletInterpolation{dim} <: Ferrite.Interpolation end
+struct RelaxedDirichletInterpolation{dim} <: Ferrite.Interpolation{dim,RefCube,0} end
 
 function Ferrite.shape_value(::RelaxedDirichletInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
     dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
@@ -168,7 +168,7 @@ function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
     return RVECache{dim}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
 end
 
-@enum BCType WEAK_PERIODIC STRONG_PERIODIC RELAXED_DIRICHLET, DIRICHLET
+@enum BCType WEAK_PERIODIC STRONG_PERIODIC RELAXED_DIRICHLET DIRICHLET
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
 struct RVE{dim}
@@ -531,7 +531,7 @@ end
 function solve_it!(rve::RVE, state::State)
     if rve.SOLVE_STYLE == SOLVE_FULL
         _solve_it_full!(rve::RVE, state::State)
-    else if rve.SOLVE_STYLE == SOLVE_SCHUR
+    elseif rve.SOLVE_STYLE == SOLVE_SCHUR
         _solve_it_schur!(rve::RVE, state::State)
     end
     #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET

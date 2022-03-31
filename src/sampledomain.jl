@@ -22,6 +22,7 @@ maxy(a::AABB) = a.corner[2] + a.lengths[2]
 maxz(a::AABB) = a.corner[3] + a.lengths[3]
 
 height(a::AABB{dim}) where dim = a.lengths[dim]
+side_length(a::AABB; dim::Int) = a.lengths[dim]
 
 mincoord(a::AABB; dim::Int) = a.corner[dim]
 maxcoord(a::AABB; dim::Int) = a.corner[dim] + a.lengths[dim]
