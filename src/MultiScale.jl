@@ -11,7 +11,7 @@ using SparseArrays
 using Random, Distributions
 using Plots: plot, plot!, scatter3d!, plot3d!
 
-export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, MODIFIED_DIRICHLET, RELAXED_DIRICHLET
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -34,7 +34,7 @@ struct RVESubPartState{MS<:MaterialModels.AbstractMaterialState}
     materialstates::Vector{Vector{MS}}
 end
 
-struct TractionInterpolation{dim} end
+struct TractionInterpolation{dim} <: Ferrite.Interpolation end
 
 function Ferrite.shape_value(::TractionInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
     dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
@@ -62,6 +62,23 @@ end
 
 Ferrite.getnbasefunctions(::TractionInterpolation{2}) = 3
 Ferrite.getnbasefunctions(::TractionInterpolation{3}) = 10
+
+struct RelaxedDirichletInterpolation{dim} <: Ferrite.Interpolation end
+
+function Ferrite.shape_value(::RelaxedDirichletInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
+    dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
+    i==1 && return dir1 ? Vec((0.0, 0.0, 1.0)) : Vec((0.0, 0.0, 0.0))
+    i==2 && return dir1 ? Vec((0.0, 0.0, 0.0)) : Vec((0.0, 0.0, 1.0))
+    error("Wrong iii")
+end
+
+function Ferrite.shape_value(::RelaxedDirichletInterpolation{2}, i::Int, ::Vec{2,Float64}, z::T) where T
+    i==1 && return (0.0, 1.0) |> Vec{2,T}
+    error("Wrong iii")
+end
+
+Ferrite.getnbasefunctions(::RelaxedDirichletInterpolation{2}) = 1
+Ferrite.getnbasefunctions(::RelaxedDirichletInterpolation{3}) = 2
 
 Base.@propagate_inbounds function disassemble!(ue::AbstractVector, u::AbstractVector, dofs::AbstractVector{Int})
     Base.@boundscheck checkbounds(u, dofs)
@@ -151,7 +168,7 @@ function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
     return RVECache{dim}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
 end
 
-@enum BCType WEAK_PERIODIC STRONG_PERIODIC DIRICHLET
+@enum BCType WEAK_PERIODIC STRONG_PERIODIC RELAXED_DIRICHLET, DIRICHLET
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
 struct RVE{dim}
@@ -169,6 +186,7 @@ struct RVE{dim}
     #Element
     cv_u::CellValues
     fv_u::FaceValues
+    ip_μ::Union{Nothing,Ferrite.Interpolation} # for the δμ field
 
     #
     L◫::NTuple{dim,Float64}
@@ -226,11 +244,14 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
 
     #
     nudofs = ndofs_per_cell(dh)
+    ip_μ = nothing
     nμdofs = 0
     if BC_TYPE == WEAK_PERIODIC
-        nμdofs = getnbasefunctions(TractionInterpolation{dim}())
+        ip_μ   = TractionInterpolation{dim}()
+        nμdofs = getnbasefunctions(ip_μ)
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
+        @assert( SOLVE_STYLE == SOLVE_FULL)
     elseif BC_TYPE == DIRICHLET
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
@@ -241,6 +262,12 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
             @assert( haskey(grid.nodesets, "back") )
             @assert( haskey(grid.nodesets, "front") )
         end
+    elseif BC_TYPE == RELAXED_DIRICHLET
+        ip_μ = RelaxedDirichletInterpolation{dim}()
+        nμdofs = getnbasefunctions(ip_μ)
+        @assert( haskey(grid.facesets, "Γ⁺") )
+        @assert( haskey(grid.facesets, "Γ⁻") )    
+        @assert( SOLVE_STYLE == SOLVE_FULL)    
     else
         error("Wrong BCTYPE")
     end
@@ -255,7 +282,7 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
     A◫ = Ω◫ / h
     I◫ = A◫*h^3/12
 
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE)
 end
 
 
@@ -325,6 +352,31 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
             (x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃),#[1:dim-1],
+            1:dim#(dim-1)
+        )
+        add!(rve.ch, dbc)
+
+    elseif rve.BC_TYPE == RELAXED_DIRICHLET
+        assemble_face!(rve, macroscale, state.a)
+        x̄ = zero(Vec{dim})
+
+        facesnames = ["right", "left"]
+        if dim ==3
+            append!(facesnames, ["front", "back"])
+        end
+
+        dbc = Ferrite.Dirichlet(
+            :u,
+            union(getfaceset.(Ref(rve.grid), facesnames)...),
+            (x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄))[1:dim-1],
+            1:(dim-1)
+        )
+        add!(rve.ch, dbc)
+
+        dbc = Ferrite.Dirichlet(
+            :u,
+            getnodeset(rve.grid, "cornerset"),
+            (x, t) -> zero(Vec{dim,Float64}),
             1:dim#(dim-1)
         )
         add!(rve.ch, dbc)
@@ -420,7 +472,7 @@ end
 function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Float64}) where dim
 
     (; udofs, X, ae, fμ, diffresult_μ) = rve.cache
-    (; grid, dh, fv_u)    = rve
+    (; grid, dh, fv_u, ip_μ)    = rve
     (; matrices) = rve
     (; diffresult_μ) = rve.cache
     (; A◫) = rve
@@ -443,14 +495,14 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         reinit!(fv_u, X, fidx)
 
         fill!(fμ, 0.0)
-        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, X, ae);
+        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
 
         #fe = DiffResults.value(diffresult_μ)
         Ke = DiffResults.jacobian(diffresult_μ)
         matrices.Kμu[μdofs, udofs] += -Ke  * (1/A◫) 
 
         fill!(fμ, 0.0)
-        integrate_fμ_ext!(fμ, fv_u, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
+        integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
         matrices.fext_μ[μdofs] += fμ * (1/A◫)
     end
 
@@ -463,14 +515,14 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         reinit!(fv_u, X, fidx)
         
         fill!(fμ, 0.0)
-        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, X, ae);
+        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
 
         #fe = DiffResults.value(diffresult_μ)
         Ke = DiffResults.jacobian(diffresult_μ)
         matrices.Kμu[μdofs, udofs] += Ke  * (1/A◫) 
 
         fill!(fμ, 0.0)
-        integrate_fμ_ext!(fμ, fv_u, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
+        integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
         matrices.fext_μ[μdofs] += -fμ * (1/A◫)
     end
 
