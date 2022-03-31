@@ -100,15 +100,14 @@ function fλθ!(f::Vector{T}, cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}
     end
 end
 
-function integrate_fμu!(result::DiffResult, y::Vector, fv_u::FaceVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}) where {dim}
-    f!(y, ae) = fμu!(y, fv_u, X, ae)
+function integrate_fμu!(result::DiffResult, y::Vector, fv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}) where {dim}
+    f!(y, ae) = fμu!(y, fv_u, ip_μ, X, ae)
     result = ForwardDiff.jacobian!(result, f!, y, ae);
     return result
 end
 
-function fμu!(f::Vector{T}, cv_u::FaceVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{T}) where {T,dim}
+function fμu!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ae::Vector{T}) where {T,dim}
 
-    ip_μ = TractionInterpolation{dim}()
     for iqp in 1:getnquadpoints(cv_u)
         dV = getdetJdV(cv_u, iqp)
         u = function_value(cv_u, iqp, ae)
@@ -123,9 +122,8 @@ function fμu!(f::Vector{T}, cv_u::FaceVectorValues, X::Vector{Vec{dim,Float64}}
     
 end
 
-function integrate_fμ_ext!(f::Vector{T}, cv_u::FaceVectorValues, X::Vector{Vec{dim,Float64}}, ∇u, ∇w, ∇θ) where {dim,T}
+function integrate_fμ_ext!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ∇u, ∇w, ∇θ) where {dim,T}
 
-    ip_μ = TractionInterpolation{dim}()
     e = basevec.(Vec{dim}, ntuple(i->i, dim))
     for iqp in 1:getnquadpoints(cv_u)
         dV = getdetJdV(cv_u, iqp)
