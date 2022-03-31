@@ -376,8 +376,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> zero(Vec{dim,Float64}),
-            1:dim#(dim-1)
+            (x, t) -> 0.0,#zero(Vec{dim,Float64}),
+            [dim]#(dim-1)
         )
         add!(rve.ch, dbc)
 
