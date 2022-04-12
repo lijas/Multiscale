@@ -142,7 +142,7 @@ function build_and_run2(; dim::Int, L◫::Float64, macroscale::MultiScale.MacroP
                 material = material,
                 cellset = getcellset(grid, "layer2") |> collect
             )],
-        BC_TYPE = MultiScale.WEAK_PERIODIC
+        BC_TYPE = MultiScale.WEAK_PERIODIC()
     )
 
     MS = eltype(eltype(materialstate))
