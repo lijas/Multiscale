@@ -32,7 +32,7 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.WEAK_PERIODIC
+        BC_TYPE = MultiScale.WEAK_PERIODIC()
     )
 
     state = State(rve)
@@ -74,7 +74,7 @@ end
 
     N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
 
-    @show isapprox(Ms[1][1,1], M_plate[1.1], atol = 1e-1)
-    @show isapprox(Ms[2][1,1], M_plate[1.1], atol = 1e-1)
+    @show isapprox(Ms[1][1,1], M_plate[1,1], atol = 1e-1)
+    @show isapprox(Ms[2][1,1], M_plate[1,1], atol = 1e-1)
 
 end
