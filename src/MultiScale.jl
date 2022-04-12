@@ -11,7 +11,7 @@ using SparseArrays
 using Random, Distributions
 using Plots: plot, plot!, scatter3d!, plot3d!
 
-export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET, RELAXED_DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -168,7 +168,14 @@ function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
     return RVECache{dim}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
 end
 
-@enum BCType WEAK_PERIODIC STRONG_PERIODIC RELAXED_DIRICHLET DIRICHLET
+abstract type BCType end
+struct WEAK_PERIODIC <: BCType end
+struct STRONG_PERIODIC  <: BCType end
+struct RELAXED_DIRICHLET  <: BCType end
+struct DIRICHLET <: BCType end
+struct STRONG_PERIODIC_WITH_PAIRS  <: BCType 
+    pairs::Vector{Pair{Int,Int}}
+end
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
 struct RVE{dim}
@@ -234,10 +241,11 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
     celltype = getcelltype(grid)
     ip_u = Ferrite.default_interpolation(celltype)
     refshape = Ferrite.getrefshape(ip_u)
+    @info "$refshape, $celltype, $ip_u"
 
     #Element
-    qr   = QuadratureRule{dim,refshape}(2)
-    qr_face   = QuadratureRule{dim-1,refshape}(2)
+    qr   = QuadratureRule{dim,refshape}(3)
+    qr_face   = QuadratureRule{dim-1,refshape}(3)
 
     cv_u = CellVectorValues(qr, ip_u)
     fv_u = FaceVectorValues(qr_face, ip_u)
@@ -246,23 +254,25 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
     nudofs = ndofs_per_cell(dh)
     ip_μ = nothing
     nμdofs = 0
-    if BC_TYPE == WEAK_PERIODIC
+    if BC_TYPE == WEAK_PERIODIC()
         ip_μ   = TractionInterpolation{dim}()
         nμdofs = getnbasefunctions(ip_μ)
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
         @assert( SOLVE_STYLE == SOLVE_FULL)
-    elseif BC_TYPE == DIRICHLET
+    elseif BC_TYPE == DIRICHLET()
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
-    elseif BC_TYPE == STRONG_PERIODIC
+    elseif BC_TYPE == STRONG_PERIODIC()
         @assert( haskey(grid.nodesets, "right") )
         @assert( haskey(grid.nodesets, "left") )
         if dim == 3
             @assert( haskey(grid.nodesets, "back") )
             @assert( haskey(grid.nodesets, "front") )
         end
-    elseif BC_TYPE == RELAXED_DIRICHLET
+    elseif BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
+        @assert( false )
+    elseif BC_TYPE == RELAXED_DIRICHLET()
         ip_μ = RelaxedDirichletInterpolation{dim}()
         nμdofs = getnbasefunctions(ip_μ)
         @assert( haskey(grid.facesets, "Γ⁺") )
@@ -315,8 +325,13 @@ function State(rve::RVE, partstates::Vector{RVESubPartState})
 end
 
 function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) where dim
+    @info "applying macroscale"
     _apply_macroscale!(rve, macroscale, state)
+
+    @info "assembling volume"
     _assemble_volume!(rve, macroscale, state)
+
+    @info "Solving it"
     a = solve_it!(rve, state)
     return a
 end
@@ -329,9 +344,11 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     e₃ = basevec(Vec{dim}, dim)
 
-    if rve.BC_TYPE == WEAK_PERIODIC
+    if rve.BC_TYPE == WEAK_PERIODIC()
+        @info "Assemble face"
         assemble_face!(rve, macroscale, state.a)
 
+        
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
@@ -340,7 +357,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         )
         add!(rve.ch, dbc)
 
-    elseif rve.BC_TYPE == DIRICHLET
+    elseif rve.BC_TYPE == DIRICHLET()
         x̄ = zero(Vec{dim})
 
         facesnames = ["right", "left"]
@@ -356,7 +373,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         )
         add!(rve.ch, dbc)
 
-    elseif rve.BC_TYPE == RELAXED_DIRICHLET
+    elseif rve.BC_TYPE == RELAXED_DIRICHLET()
         assemble_face!(rve, macroscale, state.a)
         x̄ = zero(Vec{dim})
 
@@ -381,19 +398,27 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         )
         add!(rve.ch, dbc)
 
-    elseif rve.BC_TYPE == STRONG_PERIODIC
+    elseif rve.BC_TYPE == STRONG_PERIODIC()
         nodedofs = extract_nodedofs(rve.dh, :u)
         Γ_rightnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁺" ))
         Γ_leftnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁻") )
         facepairs = ["right"=>"left"]
+        @info "Adding linear constraints"
         if dim ==3
             push!(facepairs, "back"=>"front")
         end
-        add_linear_constraints!(rve.ch, rve.grid, macroscale, facepairs, nodedofs, 1, rve.L◫[1])
+        nodepairs, masternodes = search_nodepairs(rve.grid, facepairs, rve.L◫)
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternodes)
+    elseif rve.BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
+        nodepairs = rve.BC_TYPE.nodepairs
+        masternodes = first(nodepairs)[2]
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternodes)
     end
+    @info "Closing ch"
     close!(rve.ch)
     update!(rve.ch, 0.0)
     
+    @info "creating sparsity patters"
     rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
 
 end
@@ -487,6 +512,7 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
     
     #a = zeros(Float64, ndofs(dh)) # TODO: where to put this?
 
+    @info "Gamma +"
     for (cellid, fidx) in Γ⁺
         celldofs!(udofs, dh, cellid)
         getcoordinates!(X, dh.grid, cellid)
@@ -506,6 +532,7 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         matrices.fext_μ[μdofs] += fμ * (1/A◫)
     end
 
+    @info "Gamma -"
     for (cellid, fidx) in Γ⁻
         
         celldofs!(udofs, dh, cellid)
@@ -598,8 +625,6 @@ function _solve_it_full!(rve::RVE, state::State)
     ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
     
     Ferrite._condense_sparsity_pattern!(KK, ch.acs)
-
-    @info "test log 1.0"
 
     apply!(KK, ff, ch)
     time1 = @elapsed(state.a .= KK\ff)
@@ -753,9 +778,9 @@ function condense_rhs!(f::AbstractVecOrMat, ch::ConstraintHandler)
     end
 end
 
-function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, macroscale::MacroParameters, facepairs::Vector{<:Pair}, nodedofs::Matrix{Int}, dir::Int, L◫) where {dim,C,T}
+function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_lengths::NTuple{3,T}) where {dim,C,T}
 
-
+    SEARCH_TOL = 1e-3
     nodepairs = Dict{Int,Int}()
     Γ⁺_nodes = Int[]
     Γ⁻_nodes = Int[]
@@ -772,14 +797,17 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
 
             Xr = grid.nodes[nodeid_r].x
 
-            Xoffset = Vec{dim,T}(i -> i==dir ? L◫ : 0.0)
+            Xoffset = Vec{dim,T}(i -> i==dir ? side_lengths[dir] : 0.0)
             found_pair = false
+            mindist = Inf
 
             for nodeid_l in Γ⁻_nodes
 
                 Xl = grid.nodes[nodeid_l].x
 
-                if isapprox(Xr, (Xl + Xoffset), atol = 1e-10) #Vec(-4.440892098500626e-16, 0.0) ≈ zero(Vec{2}) ?????
+                dist = norm(Xr - (Xl + Xoffset))
+                mindist = min(mindist, dist) #For debugging
+                if isapprox(dist, 0.0, atol = SEARCH_TOL) #Vec(-4.440892098500626e-16, 0.0) ≈ zero(Vec{2}) ?????
                     
                     found_pair = true
                     
@@ -803,11 +831,13 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
             end
 
             if found_pair == false
-                error("No pair node found, $nodeid_r... minnorm")
+                error("No pair node found, $nodeid_r, mindist: $mindist")
             end
 
         end
     end
+
+    return nodepairs, masternodes
 
     #check
     #=@info "check that no master nodes are slave nodes"
@@ -828,6 +858,10 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
         end
     end=#
 
+end
+
+function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternodes) where dim
+
     for (nodeid_s, nodeid_m) in nodepairs
         
         xm = grid.nodes[nodeid_m].x
@@ -839,7 +873,7 @@ function add_linear_constraints!(ch::ConstraintHandler, grid::Grid{dim,C,T}, mac
         ∇θ = increase_dim(macroscale.∇θ)
         ∇w = increase_dim(macroscale.∇w)
 
-        e₃ = basevec(Vec{dim,T})[dim]
+        e₃ = basevec(Vec{dim,Float64})[dim]
 
         z = xm[dim]
 
