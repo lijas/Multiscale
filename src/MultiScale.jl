@@ -346,6 +346,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     if rve.BC_TYPE == WEAK_PERIODIC()
         @info "Assemble face"
+        @info "Integrating face constraints"
         assemble_face!(rve, macroscale, state.a)
 
         
@@ -365,6 +366,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
             append!(facesnames, ["front", "back"])
         end
 
+        @info "Adding Dirichlet constraints"
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
@@ -390,6 +392,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         )
         add!(rve.ch, dbc)
 
+        @info "Adding Relaxed Dirichlet constraints"
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
@@ -403,23 +406,28 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         Γ_rightnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁺" ))
         Γ_leftnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁻") )
         facepairs = ["right"=>"left"]
-        @info "Adding linear constraints"
         if dim ==3
             push!(facepairs, "back"=>"front")
         end
         nodepairs, masternodes = search_nodepairs(rve.grid, facepairs, rve.L◫)
-        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternodes)
+        masternode = getnodeset(rve.grid, "cornerset") |> first
+
+        @info "Adding linear constraints"
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
     elseif rve.BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
+        masternode = getnodeset(rve.grid, "cornerset") |> first
         nodepairs = rve.BC_TYPE.nodepairs
-        masternodes = first(nodepairs)[2]
-        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternodes)
+        
+        @info "Adding linear constraints"
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
     end
     @info "Closing ch"
     close!(rve.ch)
     update!(rve.ch, 0.0)
     
     @info "creating sparsity patters"
-    rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
+    @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh)#, rve.ch)
+    @info "Size of Kuu: $(Base.summarysize(rve.matrices.Kuu)/1024^3)"
 
 end
 
@@ -860,7 +868,7 @@ function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_l
 
 end
 
-function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternodes) where dim
+function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternode::Int) where dim
 
     for (nodeid_s, nodeid_m) in nodepairs
         
@@ -891,15 +899,15 @@ function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedof
     end
 
     #Lock a master node
-    lock_masternode = -1
-    if length(masternodes) == 0
-        @assert dim == 2
-        lock_masternode = first(nodepairs)[2] #Pick the first dof on Γ+
-    else
-        lock_masternode = first(masternodes)
-    end
+    #lock_masternode = -1
+    #if length(masternodes) == 0
+    #    @assert dim == 2
+    #    lock_masternode = first(nodepairs)[2] #Pick the first dof on Γ+
+    #else
+    #    lock_masternode = first(masternodes)
+    #end
     
-    add!(ch, Ferrite.Dirichlet(:u, Set([lock_masternode]), (x,t) -> zero(Vec{dim}), 1:dim))
+    add!(ch, Ferrite.Dirichlet(:u, Set([masternode]), (x,t) -> zero(Vec{dim}), 1:dim))
 
 end
 
