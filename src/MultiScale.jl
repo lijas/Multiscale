@@ -426,7 +426,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
     update!(rve.ch, 0.0)
     
     @info "creating sparsity patters"
-    @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh)#, rve.ch)
+    @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
     @info "Size of Kuu: $(Base.summarysize(rve.matrices.Kuu)/1024^3)"
 
 end
