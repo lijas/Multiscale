@@ -136,7 +136,7 @@ end
     cellset::Vector{Int}
 end
 
-struct RVECache{dim}
+struct RVECache{dim, D <: DiffResult}
     udofs::Vector{Int}
     X::Vector{Vec{dim,Float64}}
     ae::Vector{Float64}
@@ -144,9 +144,9 @@ struct RVECache{dim}
     ke::Matrix{Float64}
     fμ::Vector{Float64}
     fλ::Vector{Float64}
-    diffresult_u::DiffResult
-    diffresult_μ::DiffResult
-    diffresult_λ::DiffResult
+    diffresult_u::D#DiffResult
+    diffresult_μ::D#DiffResult
+    diffresult_λ::D#DiffResult
 end
 
 function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
@@ -165,7 +165,7 @@ function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
     diffresult_μ = DiffResults.JacobianResult(fμ, ae)
     diffresult_λ = DiffResults.JacobianResult(fλ, ae)
 
-    return RVECache{dim}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
+    return RVECache{dim,typeof(diffresult_u)}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
 end
 
 abstract type BCType end
@@ -178,14 +178,14 @@ struct STRONG_PERIODIC_WITH_PAIRS  <: BCType
 end
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
-struct RVE{dim}
+struct RVE{dim, CACHE<:RVECache}
 
     grid::Grid{dim}
     dh::DofHandler{dim}
     ch::ConstraintHandler 
     parts::Vector{RVESubPart}
 
-    cache::RVECache
+    cache::CACHE#RVECache{3,D}
 
     #System matrices
     matrices::Matrices
@@ -329,7 +329,7 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     _apply_macroscale!(rve, macroscale, state)
 
     @info "assembling volume"
-    _assemble_volume!(rve, macroscale, state)
+    @time _assemble_volume!(rve, macroscale, state)
 
     @info "Solving it"
     a = solve_it!(rve, state)
@@ -440,21 +440,18 @@ function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
     for (partid, part) in enumerate(rve.parts)
         material = part.material
         cellset = part.cellset
-        matstates = state.partstates[partid].materialstates
+        materialstates = state.partstates[partid].materialstates
 
-        _assemble!(rve, macroscale, material, matstates, cellset, state.a)
+        _assemble!(macroscale, material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫)
+        
     end
 
 end
 
 
-function _assemble!(rve::RVE{dim}, macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}) where {dim, MS<:AbstractMaterialState}
+function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫) where {MS,dim}
 
-    (; udofs, X, ae, fu, fλ, ke) = rve.cache
-    (; grid, dh, cv_u)    = rve
-    (; matrices) = rve
-    (; diffresult_u, diffresult_λ) = rve.cache
-    (; A◫, Ω◫, I◫) = rve
+    (; udofs, X, ae, fu, fλ, ke, diffresult_λ) = cache
 
     assembler_u = start_assemble(matrices.Kuu, matrices.fuu, fillzero=false)
 
