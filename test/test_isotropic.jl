@@ -1,15 +1,15 @@
 
-function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) where dimm1
 
-    dim = dimm1+1
-
-    elsize = 0.1
+function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiScale.MacroParameters, material::AbstractMaterial)
+    
+    elsize = 0.5
 
     nelx = round(Int, L◫/elsize)
     nelz = round(Int, h/elsize)
-    nels =  ntuple(d-> d==dim ? nelz : nelx, dim) 
-    corner = Vec{dim,Float64}( d-> d == dim ? h/2 : L◫/2 )
+    nels =  (nelx, nelx, nelz) 
+    corner = Vec{dim,Float64}( ( L◫/2, L◫/2, h/2 ) )
     grid = generate_grid(dim == 2 ? Quadrilateral : Hexahedron, nels, -corner, corner)
+
 
     #Rename facesets
     addnodeset!(grid, "cornerset", (x) -> x ≈ corner)
@@ -25,9 +25,6 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
         addfaceset!(grid, "Γ⁻", getfaceset(grid, "left"))
     end
 
-
-    material = LinearElastic(E = 210.0, ν = 0.0 )
-
     rve = MultiScale.RVE(;
         grid, 
         parts = MultiScale.RVESubPart[
@@ -35,38 +32,49 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.STRONG_PERIODIC()
+        BC_TYPE = MultiScale.WEAK_PERIODIC()
     )
 
     state = State(rve)
+    MultiScale.solve_rve(rve, macroscale, state)
 
-    MultiScale._apply_macroscale!(rve, macroscale, state)
-    MultiScale._assemble_volume!(rve, macroscale, state)
-    
-    state2 = State(rve)
-    MultiScale._solve_it_full!(rve, state2)
-    
-    state1 = State(rve)
-    MultiScale._solve_it_schur!(rve, state1)
-    
-    
-    @test isapprox(norm(state1.a), norm(state2.a), atol = 1e-4)
+    N,V,M = MultiScale.calculate_response(rve, state)
 
-    #N,V,M = MultiScale.calculate_response(rve, state)
 
-    #return N,V,M 
-
+    return N,V,M 
 end
 
+@testset "Test Isotripic" begin
 
-@testset "Test schur" begin 
+    dim = 3
+    h = 5.0
+
+    material = LinearElastic(E = 210.0, ν = 0.0 )
+
     macroscale = MultiScale.MacroParameters{2}(
-        ∇u = Tensor{2,2}((0.0, 0.0, 0.0, 0.0)), 
-        ∇w = Vec{2}((0.01, 0.0)), 
-        ∇θ = Tensor{2,2}((0.0, 0.0, 0.0, 0.0)), 
+        ∇u = Tensor{2,2}((0.00, 0.00, 0.0, 0.00)), 
+        ∇w = Vec{2}((0.0, 0.00)), 
+        ∇θ = Tensor{2,2}((0.01, 0.00, 0.00, 0.00)), 
         w = 0.0, 
         θ = Vec{2}((0.0,0.0))
     )
 
-    _build_rve(2.0, 2.0, macroscale)
+    Ns = []
+    Vs = []
+    Ms = []
+    
+    Ls = [5.0, 20.0]#, 30.0]#, 4.0, 7.0]
+    for L in Ls
+        println("Length: $L")
+        N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material)
+        push!(Ns, N)
+        push!(Ms, M)
+        push!(Vs, V)
+    end
+
+    N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
+
+    @show isapprox(Ms[1][1,1], M_plate[1,1], atol = 1e-1)
+    @show isapprox(Ms[2][1,1], M_plate[1,1], atol = 1e-1)
+
 end
