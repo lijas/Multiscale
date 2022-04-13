@@ -83,7 +83,20 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     nels =  (nelx, nelx, nelz) 
     corner = Vec{dim,Float64}( ( L◫/2, L◫/2, h/2 ) )
     grid = generate_grid(dim == 2 ? Quadrilateral : Hexahedron, nels, -corner, corner)
-
+    addnodeset!(grid, "cornerset", (x) -> isapprox(x, corner, atol=1e-3))
+    #addfaceset!(grid, "left",      (x) ->  isapprox(x[1],  +corner[1], atol=1e-3) )
+    #addfaceset!(grid, "right",     (x) ->  isapprox(x[1], -corner[1], atol=1e-3))
+    #addfaceset!(grid, "back",      (x) ->  isapprox(x[2],  -corner[2], atol=1e-3) )
+    #addfaceset!(grid, "front",     (x) ->  isapprox(x[2], +corner[2], atol=1e-3))
+    
+    addnodeset!(grid, "right", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "right")))
+    addnodeset!(grid, "left",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "left")))
+    addnodeset!(grid, "back", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "back")))
+    addnodeset!(grid, "front",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "front")))
+    addfaceset!(grid, "Γ⁺", union(getfaceset(grid, "right"),getfaceset(grid, "back"))) 
+    addfaceset!(grid, "Γ⁻", union(getfaceset(grid, "left"),getfaceset(grid, "front")))
+    addcellset!(grid, "Γ⁺", first.(getfaceset(grid, "Γ⁺")))
+    addcellset!(grid, "Γ⁻", first.(getfaceset(grid, "Γ⁻")))
 
     rve = MultiScale.RVE(;
         grid, 
@@ -92,7 +105,7 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.WEAK_PERIODIC()
+        BC_TYPE = MultiScale.STRONG_PERIODIC()
     )
 
     state = State(rve)
@@ -100,8 +113,6 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
 
     N,V,M = MultiScale.calculate_response(rve, state)
 
-    addcellset!(grid, "Γ⁺", first.(getfaceset(grid, "Γ⁺")))
-    addcellset!(grid, "Γ⁻", first.(getfaceset(grid, "Γ⁻")))
     vtk_grid("rve_newcode_$(round(Int,L◫))", rve.dh) do vtk
         vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)])
         vtk_cellset(vtk, grid)
