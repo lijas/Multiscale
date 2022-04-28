@@ -1,8 +1,10 @@
-export AABB, SampleDomain, Inclusion
+export AABB, SampleDomain, SphericalInclusion
 export generate_random_domain, cutout_inplane_subdomain, get_qp_domaintags
 export plotdomain, plotdomain!, plotdomain_topview!, plotdomain_sideview!
 
 #using Plots; plotly()
+
+abstract type AbstractInclusion{dim} end
 
 const INCLUSION=1 
 const MATRIX=2
@@ -28,22 +30,45 @@ mincoord(a::AABB; dim::Int) = a.corner[dim]
 maxcoord(a::AABB; dim::Int) = a.corner[dim] + a.lengths[dim]
 volume(a::AABB) = prod(a.lengths)::Float64
 
-struct Inclusion{dim}
+#
+# SPHERE
+#
+
+struct SphericalInclusion{dim} <: AbstractInclusion{dim}
     radius::Float64
     pos::Vec{dim,Float64}
-    function Inclusion(radius::Float64, pos::Vec{dim,Float64}) where dim
+    function SphericalInclusion(radius::Float64, pos::Vec{dim,Float64}) where dim
         @assert radius > 0.0
         return new{dim}(radius, pos)
     end
 end
 
-volume(i::Inclusion{3}) = (4/3) * π * i.radius^3
-volume(i::Inclusion{2}) = π*i.radius^2
+volume(i::SphericalInclusion{3}) = (4/3) * π * i.radius^3
+volume(i::SphericalInclusion{2}) = π*i.radius^2
 
 struct SampleDomain{dim}
-    inclusions::Vector{Inclusion{dim}}
+    inclusions::Vector{SphericalInclusion{dim}}
     domain::AABB{dim}
 end
+
+#
+# Cylinder
+#
+
+struct CylinderInclusion{dim} <: AbstractInclusion{dim}
+    radius::Float64
+    length::Float64
+    pos::Vec{dim,Float64}
+    pos::Vec{dim,Float64}
+    function CylinderInclusion(radius::Float64, length::Float64, pos::Vec{dim,Float64}, dir::Vec{dim,Float64}) where dim
+        @assert radius > 0.0
+        @assert length > 0.0
+        return new{dim}(radius, length, pos, dir)
+    end
+end
+
+volume(i::CylinderInclusion{3}) = π * i.radius^2 * i.length
+volume(i::CylinderInclusion{2}) = i.length*i.radius*2
 
 function offset_domain(sd::SampleDomain, offset)
 
@@ -52,14 +77,14 @@ function offset_domain(sd::SampleDomain, offset)
     for i in 1:length(sd.inclusions) 
         r = sd.inclusions[i].radius
         pos = sd.inclusions[i].pos - offset
-        new_spheres[i] = Inclusion(r, pos)
+        new_spheres[i] = SphericalInclusion(r, pos)
     end
 
     return SampleDomain( new_spheres, offset_aabb(sd.domain, offset))
 end
 
 
-SampleDomain(aabb::AABB{dim}) where dim = SampleDomain{dim}(Inclusion{dim}[], aabb)
+#SampleDomain(aabb::AABB{dim}) where dim = SampleDomain{dim}(SphericalInclusion{dim}[], aabb)
 
 function volumefraction(sd::SampleDomain)
     volume_inclusions = 0.0
@@ -72,7 +97,7 @@ end
 function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusions::Int; max_ntries::Int = ninclusions*10) where dim
     @assert( radius_μ - radius_σ > 0.0)
 
-    inclusions = Inclusion{dim}[]
+    inclusions = SphericalInclusion{dim}[]
     
     ndradius = Uniform(radius_μ - radius_σ, radius_μ + radius_σ) #Normal(radius_μ, radius_σ)
     udpos = ntuple(d -> Uniform( mincoord(aabb, dim=d), maxcoord(aabb, dim=d)), dim)
@@ -82,7 +107,7 @@ function generate_random_domain(aabb::AABB{dim}, radius_μ, radius_σ, ninclusio
     while nadded < ninclusions
         pos_test = generate_random_position(udpos)
         radius_test = generate_random_radius(ndradius)
-        new_inclusion = Inclusion(radius_test, pos_test)
+        new_inclusion = SphericalInclusion(radius_test, pos_test)
 
         if collides_with_other_inclusion(inclusions, new_inclusion) || inclusion_outside_domain(aabb, new_inclusion)
             if ntries > max_ntries
@@ -105,7 +130,7 @@ generate_random_position(uniform::NTuple{dim, Uniform}) where dim = Vec{dim,Floa
 generate_random_radius(normal::ContinuousUnivariateDistribution)= rand(normal)
 
 
-function collides_with_other_inclusion(inclusions::Vector{Inclusion{dim}}, new_inclusion::Inclusion) where dim
+function collides_with_other_inclusion(inclusions::Vector{SphericalInclusion{dim}}, new_inclusion::SphericalInclusion) where dim
 
     for inclusion_check in inclusions
         dist = norm(inclusion_check.pos - new_inclusion.pos)
@@ -119,7 +144,21 @@ function collides_with_other_inclusion(inclusions::Vector{Inclusion{dim}}, new_i
     return false
 end
 
-function inclusion_outside_domain(aabb::AABB{dim}, a::Inclusion{dim}) where dim
+function collides_with_other_inclusion(inclusions::Vector{CylinderInclusion}, new_inclusion::CylinderInclusion)
+
+    for inclusion_check in inclusions
+        dist = norm(inclusion_check.pos - new_inclusion.pos)
+        tmp = inclusion_check.radius + new_inclusion.radius
+        check = dist <= tmp
+        if check
+            return true
+        end
+    end
+
+    return false
+end
+
+function inclusion_outside_domain(aabb::AABB{dim}, a::SphericalInclusion{dim}) where dim
 
     for d in 1:dim
         if (a.pos[d] - a.radius) < mincoord(aabb, dim = d)
@@ -169,7 +208,7 @@ function cutout_inplane_subdomain(sd::SampleDomain{dim}, L◫::Float64) where di
     return subdomain
 end
 
-function sphere_inside_aabb(sphere::Inclusion{dim}, aabb::AABB{dim}) where dim
+function sphere_inside_aabb(sphere::SphericalInclusion{dim}, aabb::AABB{dim}) where dim
 
     # Get closest point
     closest_point = Vec{dim,Float64}( (d) -> begin
