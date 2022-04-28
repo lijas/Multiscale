@@ -149,10 +149,10 @@ struct RVECache{dim, D <: DiffResult}
     diffresult_λ::D#DiffResult
 end
 
-function RVECache(dim::Int, nudofs, nμdofs, nλdofs)
+function RVECache(dim::Int, nnodes, nudofs, nμdofs, nλdofs)
 
     udofs = zeros(Int, nudofs)
-    X = zeros(Vec{dim,Float64}, nudofs÷dim)
+    X = zeros(Vec{dim,Float64}, nnodes)
     ae = zeros(Float64, nudofs)
 
     ae = zeros(Float64, nudofs)
@@ -224,14 +224,19 @@ function rvesize(grid::Grid{dim}; dir=d) where dim
 
 end
 
-function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLVE_STYLE::SolveStyle = SOLVE_FULL) where dim
+function RVE(; 
+    grid::Grid{dim}, 
+    parts::Vector{RVESubPart},
+    BC_TYPE::BCType, 
+    SOLVE_STYLE::SolveStyle = SOLVE_FULL,
+    ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)) ) where dim
 
     #Get size of rve
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
 
     #Dofhandler
     dh = DofHandler(grid)
-    push!(dh, :u, dim)
+    push!(dh, :u, dim, ip_u)
     close!(dh)
 
     #ConstraintHandler
@@ -239,18 +244,19 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
     #close!(ch)
 
     celltype = getcelltype(grid)
-    ip_u = Ferrite.default_interpolation(celltype)
+    ip_geo = Ferrite.default_interpolation(celltype)
     refshape = Ferrite.getrefshape(ip_u)
     @info "$refshape, $celltype, $ip_u"
 
     #Element
-    qr   = QuadratureRule{dim,refshape}(3)
+    qr        = QuadratureRule{dim,  refshape}(3)
     qr_face   = QuadratureRule{dim-1,refshape}(3)
 
-    cv_u = CellVectorValues(qr, ip_u)
-    fv_u = FaceVectorValues(qr_face, ip_u)
+    cv_u = CellVectorValues(qr, ip_u, ip_geo)
+    fv_u = FaceVectorValues(qr_face, ip_u, ip_geo)
 
     #
+    nnodes = getnbasefunctions(ip_geo)
     nudofs = ndofs_per_cell(dh)
     ip_μ = nothing
     nμdofs = 0
@@ -283,7 +289,7 @@ function RVE(; grid::Grid{dim}, parts::Vector{RVESubPart}, BC_TYPE::BCType, SOLV
     end
     nλdofs = dim-1#*2 - 1
     
-    cache = RVECache(dim, nudofs, nμdofs, nλdofs)
+    cache = RVECache(dim, nnodes, nudofs, nμdofs, nλdofs)
     matrices = Matrices(dh, ch, nμdofs, nλdofs)
 
     #
@@ -384,19 +390,20 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
             append!(facesnames, ["front", "back"])
         end
 
+        @info "Adding Relaxed Dirichlet constraints"
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄))[1:dim-1],
+            (x, t) ->  ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[1:dim-1],
             1:(dim-1)
         )
         add!(rve.ch, dbc)
 
-        @info "Adding Relaxed Dirichlet constraints"
+        @info "Locking corner node"
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> 0.0,#zero(Vec{dim,Float64}),
+            (x, t) -> ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[dim],#zero(Vec{dim,Float64}),
             [dim]#(dim-1)
         )
         add!(rve.ch, dbc)
@@ -424,7 +431,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
     @info "Closing ch"
     close!(rve.ch)
     update!(rve.ch, 0.0)
-    
+
     @info "creating sparsity patters"
     @time rve.matrices.Kuu = create_sparsity_pattern(rve.dh, rve.ch)
     @info "Size of Kuu: $(Base.summarysize(rve.matrices.Kuu)/1024^3)"
@@ -635,6 +642,13 @@ function _solve_it_full!(rve::RVE, state::State)
     time1 = @elapsed(state.a .= KK\ff)
     apply!(state.a, ch)
     @info "Solving the full sytem took $time1 seconds"
+
+    @show KK[68008,:]
+    #reac = KK*state.a - ff
+    #@show state.a[[68008, 68009, 68010]]
+    #@show ff[[68008, 68009, 68010]]
+    #@show reac[[68008, 68009, 68010]]
+
 end
 
 function _solve_it_weak_periodic(rve::RVE, state::State)
