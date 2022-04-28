@@ -124,7 +124,15 @@ function volumefraction(sd::SampleDomain)
     return volume_inclusions / volume(sd.domain)
 end
 
-function generate_random_domain(InclusionType::Type{T}, inclusion_para, aabb::AABB{dim}, ninclusions::Int; max_ntries::Int = ninclusions*10) where {dim, T<:AbstractInclusion{dim}}
+function generate_random_domain(
+                    InclusionType::Type{T}, 
+                    inclusion_para, 
+                    aabb::AABB{dim}, 
+                    ninclusions::Int; 
+                    max_ntries::Int = ninclusions*10,
+                    allow_outside_domain::Bool = false, 
+                    allow_collisions::Bool = false
+    ) where {dim, T<:AbstractInclusion{dim}}
 
     inclusions = InclusionType[]
     
@@ -136,7 +144,10 @@ function generate_random_domain(InclusionType::Type{T}, inclusion_para, aabb::AA
         pos = generate_random_position(udpos)
         new_inclusion = generate_random_inclusion(InclusionType, inclusion_para, pos)
 
-        if collides_with_other_inclusion(inclusions, new_inclusion) || inclusion_outside_domain(aabb, new_inclusion)
+        should_not_add_inclusion =  (allow_collisions     ? false : collides_with_other_inclusion(inclusions, new_inclusion)) || 
+                                    (allow_outside_domain ? false : inclusion_outside_domain(aabb, new_inclusion))
+
+        if should_not_add_inclusion
             if ntries > max_ntries
                 error("Could not distribute all voids: $nadded/$ninclusions")
             end
