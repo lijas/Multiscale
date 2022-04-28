@@ -249,8 +249,8 @@ function RVE(;
     @info "$refshape, $celltype, $ip_u"
 
     #Element
-    qr        = QuadratureRule{dim,  refshape}(3)
-    qr_face   = QuadratureRule{dim-1,refshape}(3)
+    qr        = QuadratureRule{dim,  refshape}(2)
+    qr_face   = QuadratureRule{dim-1,refshape}(2)
 
     cv_u = CellVectorValues(qr, ip_u, ip_geo)
     fv_u = FaceVectorValues(qr_face, ip_u, ip_geo)
@@ -643,7 +643,7 @@ function _solve_it_full!(rve::RVE, state::State)
     apply!(state.a, ch)
     @info "Solving the full sytem took $time1 seconds"
 
-    @show KK[68008,:]
+    #@show KK[68008,:]
     #reac = KK*state.a - ff
     #@show state.a[[68008, 68009, 68010]]
     #@show ff[[68008, 68009, 68010]]
@@ -797,7 +797,7 @@ function condense_rhs!(f::AbstractVecOrMat, ch::ConstraintHandler)
     end
 end
 
-function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_lengths::NTuple{3,T}) where {dim,C,T}
+function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_lengths::NTuple{dim,T}) where {dim,C,T}
 
     SEARCH_TOL = 1e-3
     nodepairs = Dict{Int,Int}()
