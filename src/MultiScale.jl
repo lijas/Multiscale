@@ -623,7 +623,7 @@ function _solve_it_schur!(rve::RVE, state::State)
     apply!(state.a, ch)
 end
 
-function _solve_it_full!(rve::RVE, state::State)
+function _solve_it_full!(rve::RVE{dim}, state::State) where dim
 
     (; dh, ch, matrices)   = rve
     (; nμdofs, nλdofs) = rve
@@ -638,10 +638,19 @@ function _solve_it_full!(rve::RVE, state::State)
     
     Ferrite._condense_sparsity_pattern!(KK, ch.acs)
 
+    @warn "copying  KK"
+    KKK = KK[ch.prescribed_dofs,:]
+    fff = copy( ff[ch.prescribed_dofs] )
     apply!(KK, ff, ch)
     time1 = @elapsed(state.a .= KK\ff)
     apply!(state.a, ch)
     @info "Solving the full sytem took $time1 seconds"
+
+    if rve.BC_TYPE == WEAK_PERIODIC()
+        @assert length(ch.prescribed_dofs) == dim
+        reac = KKK*state.a - fff
+        @show reac
+    end
 
     #@show KK[68008,:]
     #reac = KK*state.a - ff
