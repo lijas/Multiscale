@@ -57,7 +57,7 @@ function generate_random_inclusion(::Type{SphericalInclusion{dim}}, (radius_μ, 
     return SphericalInclusion(r, pos)
 end
 
-function offset_inclusion(s::SphericalInclusion{dim}, offset::Vec{dim})
+function offset_inclusion(s::SphericalInclusion{dim}, offset::Vec{dim}) where {dim}
     return SphericalInclusion(s.radius, s.pos - offset)
 end
 
@@ -230,6 +230,8 @@ function inclusion_outside_domain(aabb::AABB{dim}, a::CylindricalInclusion{2}) w
     #(a.pos[1] - a.length/2) < mincoord(aabb, dim = 1) && return true
     #(a.pos[1] + a.length/2) > maxcoord(aabb, dim = 1) && return true
     
+    return false
+    
 end
 
 function cutout_subdomain(sd::SampleDomain{dim}, L◫::Float64) where dim
@@ -255,7 +257,7 @@ function cutout_inplane_subdomain(sd::SampleDomain{dim}, L◫::Float64) where di
     InclusionType = eltype(sd.inclusions)
 
     h = height(sd.domain)
-    udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d)), dim-1)
+    udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d)) - L◫, dim-1)
 
     size  = Vec{dim}( d -> d==dim ? h : L◫ )
     coord = Vec{dim}( d -> d!=dim ? rand(udpos[d]) : mincoord(sd.domain; dim=d) )
