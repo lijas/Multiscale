@@ -257,7 +257,7 @@ function cutout_inplane_subdomain(sd::SampleDomain{dim}, L◫::Float64) where di
     InclusionType = eltype(sd.inclusions)
 
     h = height(sd.domain)
-    udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d)) - L◫, dim-1)
+    udpos = ntuple(d -> Uniform( mincoord(sd.domain, dim=d), maxcoord(sd.domain, dim=d) - L◫), dim-1)
 
     size  = Vec{dim}( d -> d==dim ? h : L◫ )
     coord = Vec{dim}( d -> d!=dim ? rand(udpos[d]) : mincoord(sd.domain; dim=d) )
