@@ -372,7 +372,8 @@ function plotdomain!(fig, sd::SampleDomain{3})
     plot3d!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
 
     for hole in sd.inclusions
-        scatter3d!(fig, [hole.pos[1]], [hole.pos[2]], [hole.pos[3]]; markershape = :circle, markersize = hole.radius*10)
+        plotinclusion!(fig, hole)
+        #scatter3d!(fig, [hole.pos[1]], [hole.pos[2]], [hole.pos[3]]; markershape = :circle, markersize = hole.radius*10, label = :none)
     end
 
     return fig
@@ -395,12 +396,30 @@ function _plotdomain_view!(fig, sd::SampleDomain{3}, d1, d2)
     return fig
 end
 
-function plotinclusion!(fig, sphere::SphericalInclusion; kwargs...)
+function plotinclusion!(fig, sphere::SphericalInclusion{2}; kwargs...)
     θ = range(0, 2π, 20)
     xc = sphere.pos[1] .+ sphere.radius*cos.(θ)
     yc = sphere.pos[2] .+ sphere.radius*sin.(θ)
     plot!(fig, xc, yc; kwargs...)
 end
+
+function plotinclusion!(fig, sphere::SphericalInclusion{3}; kwargs...)
+    # spherical: (radius r, inclination θ, azimuth φ)
+    X(r,theta,phi) = r * sin(theta) * sin(phi)
+    Y(r,theta,phi) = r * sin(theta) * cos(phi)
+    Z(r,theta,phi) = r * cos(theta)
+
+    thetas = range(0, stop=pi,   length=5)
+    phis   = range(0, stop=2pi, length=5)
+
+    r = sphere.radius
+    xs = [X(r, theta, phi)+sphere.pos[1] for theta in thetas, phi in phis] 
+    ys = [Y(r, theta, phi)+sphere.pos[2] for theta in thetas, phi in phis]
+    zs = [Z(r, theta, phi)+sphere.pos[3] for theta in thetas, phi in phis]
+
+    surface!(fig, xs, ys, zs)
+end
+
 
 function plotinclusion!(fig, cyl::CylindricalInclusion; kwargs...)
     @assert abs(cyl.dir ⋅ Vec((1.0,0.0))) ≈ 1.0

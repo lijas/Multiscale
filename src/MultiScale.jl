@@ -9,7 +9,7 @@ using ForwardDiff
 using DiffResults: DiffResult
 using SparseArrays
 using Random, Distributions
-using Plots: plot, plot!, scatter3d!, plot3d!
+using Plots: plot, plot!, scatter3d!, plot3d!, surface!
 
 export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET
 
