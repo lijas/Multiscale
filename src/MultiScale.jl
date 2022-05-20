@@ -259,6 +259,9 @@ function RVE(;
     end
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
 
+    #Check if all cells are included in a cellset
+    _check_cellsets(parts, getncells(grid))
+
     #Dofhandler
     dh = DofHandler(grid)
     push!(dh, :u, dim, ip_u)
@@ -274,8 +277,8 @@ function RVE(;
     @info "$refshape, $celltype, $ip_u"
 
     #Element
-    qr        = QuadratureRule{dim,  refshape}(2)
-    qr_face   = QuadratureRule{dim-1,refshape}(2)
+    qr        = Ferrite._mass_qr(ip_u)
+    qr_face   = Ferrite._mass_qr( Ferrite.getlowerdim(ip_u) )
 
     cv_u = CellVectorValues(qr, ip_u, ip_geo)
     fv_u = FaceVectorValues(qr_face, ip_u, ip_geo)
@@ -355,6 +358,7 @@ function State(rve::RVE)
 end
 
 function State(rve::RVE, partstates::Vector{RVESubPartState}) 
+    @assert getnquadpoints( rve.cv_u ) == length(  first(first(partstates).materialstates) )
     _ndofs = ndofs(rve.dh) + rve.nμdofs + rve.nλdofs
     return State(zeros(Float64, _ndofs), partstates)
 end
@@ -1021,6 +1025,25 @@ function faceset_to_nodeset(grid::Grid, set::Set{FaceIndex})
         end
     end
     return nodeset
+end
+
+
+function _check_cellsets(parts, ncells::Int)
+
+    all_cellsets = Int[]
+    for part in parts
+        for cellid in part.cellset
+            if cellid in all_cellsets
+                error("$cellid is in two sets")
+            end
+        end
+        append!(all_cellsets, part.cellset)
+
+        !issorted(part.cellset) && error("The cellset for the parts must be sorted.")
+    end
+
+    length(all_cellsets) < ncells && error("Not all cells are included in a part.")
+
 end
 
 include("response.jl")
