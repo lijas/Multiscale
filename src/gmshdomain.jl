@@ -5,7 +5,7 @@ function addbox(a::AABB{2})
     mainbox = gmsh.model.occ.addRectangle(a.corner[1],a.corner[2], 0.0, a.lengths[1], a.lengths[2])
 end
 
-function addsphere(a::Inclusion{2})
+function addsphere(a::SphericalInclusion{2})
     sphere = gmsh.model.occ.addDisk(a.pos[1],a.pos[2],0,a.radius,a.radius)
 end
 
@@ -13,7 +13,7 @@ function addbox(a::AABB{3})
     mainbox = gmsh.model.occ.addBox(a.corner[1],a.corner[2], a.corner[3], a.lengths[1], a.lengths[2], a.lengths[3])
 end
 
-function addsphere(a::Inclusion{3})
+function addsphere(a::SphericalInclusion{3})
     sphere = gmsh.model.occ.addSphere(a.pos[1],a.pos[2],a.pos[3], a.radius)
 end
 
@@ -62,13 +62,13 @@ function trim_edges(all, domain::AABB{3})
 
 end
 
-function get_entity_tag(a::Inclusion{2})
+function get_entity_tag(a::SphericalInclusion{2})
     eps = a.radius/100
     gmsh.model.getEntitiesInBoundingBox(a.pos[1] - a.radius - eps, a.pos[2] - a.radius - eps, -eps, 
                                         a.pos[1] + a.radius + eps, a.pos[2] + a.radius + eps, +eps, 2)
 end
 
-function get_entity_tag(a::Inclusion{3})
+function get_entity_tag(a::SphericalInclusion{3})
     eps = a.radius/100
     gmsh.model.getEntitiesInBoundingBox(a.pos[1] - a.radius - eps, a.pos[2] - a.radius - eps, a.pos[3] - a.radius - eps, 
                                         a.pos[1] + a.radius + eps, a.pos[2] + a.radius + eps, a.pos[3] + a.radius + eps, 3)

@@ -9,7 +9,7 @@ using ForwardDiff
 using DiffResults: DiffResult
 using SparseArrays
 using Random, Distributions
-using Plots: plot, plot!, scatter3d!, plot3d!
+using Plots: plot, plot!, scatter3d!, plot3d!, surface!
 
 export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET
 
@@ -100,11 +100,14 @@ mutable struct Matrices
 
     fext_μ::Vector{Float64}
     fext_λ::Vector{Float64}
+
+    check_z::Vector{Float64} #Check value ∫ z dΩ
+    check_x::Vector{Float64}
 end
 
 function Matrices(dh::DofHandler, ch::ConstraintHandler, nμ::Int, nλ::Int)
     Kuu = spzeros(Float64, ndofs(dh), ndofs(dh)) #create_sparsity_pattern(dh, ch)
-    return Matrices(Kuu, spzeros(nμ, ndofs(dh)), spzeros(nλ, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, nμ), zeros(Float64, nλ))
+    return Matrices(Kuu, spzeros(nμ, ndofs(dh)), spzeros(nλ, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, nμ), zeros(Float64, nλ), [0.0], [0.0])
 end
 
 
@@ -209,7 +212,8 @@ struct RVE{dim, CACHE<:RVECache}
     #
     BC_TYPE::BCType
     SOLVE_STYLE::SolveStyle
-    
+    VOLUME_CONSTRAINT::Bool    
+    PERFORM_CHECKS::Bool
 end
 
 function rvesize(grid::Grid{dim}; dir=d) where dim
@@ -224,14 +228,35 @@ function rvesize(grid::Grid{dim}; dir=d) where dim
 
 end
 
+function rvecenter(grid::Grid{dim}) where dim
+    
+    maxx = zeros(Float64, dim)
+    minx = zeros(Float64, dim)
+
+    for node in grid.nodes
+        for d in 1:dim
+            maxx[d] = max(maxx[d], node.x[d])
+            minx[d] = min(minx[d], node.x[d])
+        end
+    end
+    return Vec{dim}( d-> (maxx[d] + minx[d])/2 )
+end
+
+
 function RVE(; 
     grid::Grid{dim}, 
     parts::Vector{RVESubPart},
     BC_TYPE::BCType, 
     SOLVE_STYLE::SolveStyle = SOLVE_FULL,
-    ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)) ) where dim
+    ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)),
+    VOLUME_CONSTRAINT = true,
+    PERFORM_CHECKS = false,) where dim
 
     #Get size of rve
+    x_center = rvecenter(grid)
+    if !isapprox(norm(x_center), 0.0, atol = 1e-15)
+        error("RVE must be centered $(x_center)")
+    end
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
 
     #Dofhandler
@@ -287,7 +312,11 @@ function RVE(;
     else
         error("Wrong BCTYPE")
     end
-    nλdofs = dim-1#*2 - 1
+    
+    nλdofs = 0
+    if VOLUME_CONSTRAINT
+        nλdofs += dim-1
+    end
     
     cache = RVECache(dim, nnodes, nudofs, nμdofs, nλdofs)
     matrices = Matrices(dh, ch, nμdofs, nλdofs)
@@ -298,7 +327,7 @@ function RVE(;
     A◫ = Ω◫ / h
     I◫ = A◫*h^3/12
 
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, VOLUME_CONSTRAINT, PERFORM_CHECKS)
 end
 
 
@@ -355,11 +384,11 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         @info "Integrating face constraints"
         assemble_face!(rve, macroscale, state.a)
 
-        
+        @show [macroscale.u..., macroscale.w]
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> zero(Vec{dim,Float64}),
+            (x, t) -> [macroscale.u..., macroscale.w],
             1:dim#(dim-1)
         )
         add!(rve.ch, dbc)
@@ -443,20 +472,27 @@ function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
     fill!(rve.matrices.Kuu, 0.0)
     fill!(rve.matrices.Kλu, 0.0)
     fill!(rve.matrices.fuu, 0.0)
+    fill!(rve.matrices.check_x, 0.0)
+    fill!(rve.matrices.check_z, 0.0)
 
     for (partid, part) in enumerate(rve.parts)
         material = part.material
         cellset = part.cellset
         materialstates = state.partstates[partid].materialstates
 
-        _assemble!(macroscale, material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫)
+        _assemble!(macroscale, material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS)
         
     end
 
+    if rve.PERFORM_CHECKS
+        @info "Check value ∫ z dΩ: $(rve.matrices.check_z[1])"
+        @info "Check value ∫ xₚ - ̄x dΩ: $(rve.matrices.check_x[1])"
+        @info ""
+    end
 end
 
 
-function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫) where {MS,dim}
+function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS) where {MS,dim}
 
     (; udofs, X, ae, fu, fλ, ke, diffresult_λ) = cache
 
@@ -481,7 +517,7 @@ function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, mat
         #fu = 1/A◫ * DiffResults.value(diffresult_u)
         #ke = 1/A◫ * DiffResults.jacobian(diffresult_u)
         
-        integrate_fuu2!(ke, fu, cv_u, material, mstates, ae);
+        integrate_fuu2!(ke, fu, cv_u, material, mstates, ae)
         assemble!(assembler_u, udofs, ke, fu)
 
         #---
@@ -492,16 +528,24 @@ function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, mat
             matrices.Kλu[[d], udofs] += -Ke * (1/Ω◫)
         end =#
 
-        for d in 1:dim-1
-            fill!(fλ, 0.0)
-            diffresult_λ = integrate_fλθ!(diffresult_λ, fλ, cv_u, X, ae, d); 
-            Ke = DiffResults.jacobian(diffresult_λ)
-            matrices.Kλu[[d], udofs] += Ke * (1/I◫)
+        if VOLUME_CONSTRAINT
+            for d in 1:dim-1
+                fill!(fλ, 0.0)
+                diffresult_λ = integrate_fλθ!(diffresult_λ, fλ, cv_u, X, ae, d); 
+                Ke = DiffResults.jacobian(diffresult_λ)
+                matrices.Kλu[[d], udofs] += Ke * (1/I◫)
+            end
+        end
+
+        if PERFORM_CHECKS
+            integrate_checks(matrices.check_z, matrices.check_x, cv_u, X)
         end
     end
 
-    for d in 1:dim-1
-        matrices.fext_λ[d] +=  -macroscale.θ[d]
+    if VOLUME_CONSTRAINT
+        for d in 1:dim-1
+            matrices.fext_λ[d] +=  -macroscale.θ[d]
+        end
     end
 
 end
@@ -623,7 +667,7 @@ function _solve_it_schur!(rve::RVE, state::State)
     apply!(state.a, ch)
 end
 
-function _solve_it_full!(rve::RVE, state::State)
+function _solve_it_full!(rve::RVE{dim}, state::State) where dim
 
     (; dh, ch, matrices)   = rve
     (; nμdofs, nλdofs) = rve
@@ -638,10 +682,22 @@ function _solve_it_full!(rve::RVE, state::State)
     
     Ferrite._condense_sparsity_pattern!(KK, ch.acs)
 
+    @warn "copying  KK"
+    KKK = KK[ch.prescribed_dofs,:]
+    fff = copy( ff[ch.prescribed_dofs] )
     apply!(KK, ff, ch)
     time1 = @elapsed(state.a .= KK\ff)
     apply!(state.a, ch)
     @info "Solving the full sytem took $time1 seconds"
+
+    if rve.BC_TYPE == WEAK_PERIODIC()
+        @assert length(ch.prescribed_dofs) == dim
+        @show size(KKK)
+        @show size(state.a)
+        @show size(fff)
+        reac = KKK*state.a - fff
+        @show reac
+    end
 
     #@show KK[68008,:]
     #reac = KK*state.a - ff

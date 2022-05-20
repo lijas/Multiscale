@@ -1,6 +1,6 @@
 
 
-function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiScale.MacroParameters, material::AbstractMaterial)
+function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiScale.MacroParameters, material::AbstractMaterial, bctype::MultiScale.BCType)
     
     elsize = 0.5
 
@@ -32,7 +32,8 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.WEAK_PERIODIC()
+        BC_TYPE = bctype,
+        PERFORM_CHECKS = true
     )
 
     state = State(rve)
@@ -63,18 +64,22 @@ end
     Vs = []
     Ms = []
     
-    Ls = [5.0, 20.0]#, 30.0]#, 4.0, 7.0]
-    for L in Ls
-        println("Length: $L")
-        N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material)
-        push!(Ns, N)
-        push!(Ms, M)
-        push!(Vs, V)
-    end
-
     N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
 
-    @show isapprox(Ms[1][1,1], M_plate[1,1], atol = 1e-1)
-    @show isapprox(Ms[2][1,1], M_plate[1,1], atol = 1e-1)
+    Ls = [5.0, 20.0]#, 30.0]#, 4.0, 7.0]
+    bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), STRONG_PERIODIC()]#, DIRICHLET(),]
+    for bctype in bctypes
+        for L in Ls
+            println("Length: $L")
+            N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material, bctype=bctype)
+            push!(Ns, N)
+            push!(Ms, M)
+            push!(Vs, V)
+            @test isapprox(M[1,1], M_plate[1,1], atol = 0.5)
+        end
+    end
+
+
+    @show Ms
 
 end
