@@ -364,7 +364,7 @@ function plotdomain!(fig, sd::SampleDomain{2})
     return fig
 end
 
-function plotdomain!(fig, sd::SampleDomain{3})
+function plotdomain!(fig, sd::SampleDomain{3}; kwargs...)
 
     plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
     plot3d!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
@@ -372,7 +372,7 @@ function plotdomain!(fig, sd::SampleDomain{3})
     plot3d!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
 
     for hole in sd.inclusions
-        plotinclusion!(fig, hole)
+        plotinclusion!(fig, hole; kwargs...)
         #scatter3d!(fig, [hole.pos[1]], [hole.pos[2]], [hole.pos[3]]; markershape = :circle, markersize = hole.radius*10, label = :none)
     end
 
