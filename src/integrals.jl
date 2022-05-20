@@ -143,3 +143,18 @@ function integrate_fμ_ext!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite
         end
     end  
 end
+
+function integrate_checks(val1::Vector{Float64}, val2::Vector{Float64}, cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}}) where {dim}
+
+    for iqp in 1:getnquadpoints(cv_u)
+ 
+        dV = getdetJdV(cv_u, iqp)
+        xyz = spatial_coordinate(cv_u, iqp, X)
+        xₚ  = Vec{dim-1}(i -> xyz[i])
+        z = xyz[dim]
+        
+        val1[1] += (xₚ[1]) * dV
+        val2[1] += (z) * dV
+    end
+
+end
