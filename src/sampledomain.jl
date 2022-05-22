@@ -350,15 +350,15 @@ end
 
 plotdomain(sd::SampleDomain; kwargs...) = plotdomain!(plot(;kwargs...), sd)
 
-function plotdomain!(fig, sd::SampleDomain{2})
+function plotdomain!(fig, sd::SampleDomain{2}; kwargs...)
 
-    plot!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], color="red" )
-    plot!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], color="red" )
-    plot!(fig, [minx(sd.domain), maxx(sd.domain)], [maxy(sd.domain), maxy(sd.domain)], color="red" )
-    plot!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], color="red" )
+    plot!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], label = :none, color="black" )
+    plot!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], label = :none, color="black" )
+    plot!(fig, [minx(sd.domain), maxx(sd.domain)], [maxy(sd.domain), maxy(sd.domain)], label = :none, color="black" )
+    plot!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], label = :none, color="black" )
 
     for hole in sd.inclusions
-        plotinclusion!(fig, hole)
+        plotinclusion!(fig, hole; kwargs...)
     end
 
     return fig
@@ -366,10 +366,10 @@ end
 
 function plotdomain!(fig, sd::SampleDomain{3}; kwargs...)
 
-    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
-    plot3d!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
-    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [maxy(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
-    plot3d!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], color="red" )
+    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [miny(sd.domain), miny(sd.domain)], [minz(sd.domain), minz(sd.domain)], label = :none, color="red" )
+    plot3d!(fig, [maxx(sd.domain), maxx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], label = :none, color="red" )
+    plot3d!(fig, [minx(sd.domain), maxx(sd.domain)], [maxy(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], label = :none, color="red" )
+    plot3d!(fig, [minx(sd.domain), minx(sd.domain)], [miny(sd.domain), maxy(sd.domain)], [minz(sd.domain), minz(sd.domain)], label = :none, color="red" )
 
     for hole in sd.inclusions
         plotinclusion!(fig, hole; kwargs...)
@@ -384,10 +384,10 @@ plotdomain_sideview!(fig, sd::SampleDomain{3}) =  _plotdomain_view!(fig, sd, 1, 
 
 function _plotdomain_view!(fig, sd::SampleDomain{3}, d1, d2)
 
-    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), mincoord(sd.domain, dim=d2)], color="red" )
-    plot!(fig, [maxcoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
-    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [maxcoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
-    plot!(fig, [mincoord(sd.domain, dim=d1), mincoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], color="red" )
+    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), mincoord(sd.domain, dim=d2)], label = :none, color="red" )
+    plot!(fig, [maxcoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], label = :none, color="red" )
+    plot!(fig, [mincoord(sd.domain, dim=d1), maxcoord(sd.domain, dim=d1)], [maxcoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], label = :none, color="red" )
+    plot!(fig, [mincoord(sd.domain, dim=d1), mincoord(sd.domain, dim=d1)], [mincoord(sd.domain, dim=d2), maxcoord(sd.domain, dim=d2)], label = :none, color="red" )
 
     for hole in sd.inclusions
         plotinclusion!(fig, hole)
@@ -400,7 +400,8 @@ function plotinclusion!(fig, sphere::SphericalInclusion{2}; kwargs...)
     θ = range(0, 2π, 20)
     xc = sphere.pos[1] .+ sphere.radius*cos.(θ)
     yc = sphere.pos[2] .+ sphere.radius*sin.(θ)
-    plot!(fig, xc, yc; kwargs...)
+    #plot!(fig, xc, yc; kwargs...)
+    plot!(fig, xc, yc; label = :none,  fill = (0, 0.7, :gray), w = 0.1, linecolor = :gray)
 end
 
 function plotinclusion!(fig, sphere::SphericalInclusion{3}; kwargs...)
