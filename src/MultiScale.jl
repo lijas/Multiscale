@@ -37,7 +37,9 @@ end
 struct TractionInterpolation{dim} <: Ferrite.Interpolation{dim,RefCube,1} end
 
 function Ferrite.shape_value(::TractionInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
-    dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
+    dir1 = ( isapprox(abs(n[1]), 1.0, atol=1e-2) && 
+             isapprox(abs(n[2]), 0.0, atol=1e-2) && 
+             isapprox(abs(n[3]), 0.0, atol=1e-2)) ? true : false
     #@show dir1, n
     i==1 && return dir1 ? Vec((1.0, 0.0, 0.0)) : Vec((0.0, 0.0, 0.0))
     i==2 && return dir1 ? Vec((0.0, 0.0, 0.0)) : Vec((1.0, 0.0, 0.0))
@@ -66,7 +68,10 @@ Ferrite.getnbasefunctions(::TractionInterpolation{3}) = 10
 struct RelaxedDirichletInterpolation{dim} <: Ferrite.Interpolation{dim,RefCube,0} end
 
 function Ferrite.shape_value(::RelaxedDirichletInterpolation{3}, i::Int, n::Vec{3,Float64}, z::T) where T
-    dir1 = all( abs(n[1]) ≈ 1.0 && n[2] ≈ 0.0 && n[3] ≈ 0.0) ? true : false
+    dir1 = ( isapprox(abs(n[1]), 1.0, atol=1e-2) && 
+             isapprox(abs(n[2]), 0.0, atol=1e-2) && 
+             isapprox(abs(n[3]), 0.0, atol=1e-2)) ? true : false
+
     i==1 && return dir1 ? Vec((0.0, 0.0, 1.0)) : Vec((0.0, 0.0, 0.0))
     i==2 && return dir1 ? Vec((0.0, 0.0, 0.0)) : Vec((0.0, 0.0, 1.0))
     error("Wrong iii")
