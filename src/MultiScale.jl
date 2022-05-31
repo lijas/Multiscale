@@ -467,9 +467,9 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
     end
 
-    if VOLUME_CONSTRAINT
+    if rve.VOLUME_CONSTRAINT
         for d in 1:dim-1
-            matrices.fext_λ[d] +=  -macroscale.θ[d]
+            rve.matrices.fext_λ[d] +=  -macroscale.θ[d]
         end
     end
 
