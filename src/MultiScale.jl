@@ -373,7 +373,7 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     _apply_macroscale!(rve, macroscale, state)
 
     @info "assembling volume"
-    @time _assemble_volume!(rve, macroscale, state)
+    @time _assemble_volume!(rve, state)
 
     @info "Solving it"
     a = solve_it!(rve, state)
@@ -466,6 +466,13 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         @info "Adding linear constraints"
         add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
     end
+
+    if VOLUME_CONSTRAINT
+        for d in 1:dim-1
+            matrices.fext_λ[d] +=  -macroscale.θ[d]
+        end
+    end
+
     @info "Closing ch"
     close!(rve.ch)
     update!(rve.ch, 0.0)
@@ -476,7 +483,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
 end
 
-function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
+function _assemble_volume!(rve::RVE, state::State)
 
     fill!(rve.matrices.Kuu, 0.0)
     fill!(rve.matrices.Kλu, 0.0)
@@ -489,7 +496,7 @@ function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
         cellset = part.cellset
         materialstates = state.partstates[partid].materialstates
 
-        _assemble!(macroscale, material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS)
+        _assemble!(material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS)
         
     end
 
@@ -501,7 +508,7 @@ function _assemble_volume!(rve::RVE, macroscale::MacroParameters, state::State)
 end
 
 
-function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS) where {MS,dim}
+function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS) where {MS,dim}
 
     (; udofs, X, ae, fu, fλ, ke, diffresult_λ) = cache
 
@@ -548,12 +555,6 @@ function _assemble!(macroscale::MacroParameters, material::AbstractMaterial, mat
 
         if PERFORM_CHECKS
             integrate_checks(matrices.check_z, matrices.check_x, cv_u, X)
-        end
-    end
-
-    if VOLUME_CONSTRAINT
-        for d in 1:dim-1
-            matrices.fext_λ[d] +=  -macroscale.θ[d]
         end
     end
 
