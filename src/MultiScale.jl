@@ -388,6 +388,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     e₃ = basevec(Vec{dim}, dim)
 
+    reset_constrainthandler!(rve.ch)
+
     if rve.BC_TYPE == WEAK_PERIODIC()
         @info "Assemble face"
         @info "Integrating face constraints"
@@ -1050,6 +1052,18 @@ function _check_cellsets(parts, ncells::Int)
 
     length(all_cellsets) < ncells && error("Not all cells are included in a part.")
 
+end
+
+function reset_constrainthandler!(ch::ConstraintHandler)
+    empty!(ch.dbcs)
+    empty!(ch.acs)
+    empty!(ch.dbcs)
+    empty!(ch.prescribed_dofs)
+    empty!(ch.free_dofs)
+    empty!(ch.inhomogeneities)
+    empty!(ch.dofmapping)
+    empty!(ch.bcvalues)
+    ch.closed[] = false
 end
 
 include("response.jl")
