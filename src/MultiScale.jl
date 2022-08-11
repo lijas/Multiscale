@@ -4,12 +4,25 @@ module MultiScale
 using MaterialModels
 using Ferrite
 #using FerriteGmsh
+using LinearAlgebra
 using Tensors
 using ForwardDiff
 using DiffResults: DiffResult
 using SparseArrays
 using Random, Distributions
 using Plots: plot, plot!, scatter3d!, plot3d!, surface!
+using IterativeSolvers
+using SymRCM
+using LinearSolve: solve, LinearProblem, LinearSolve
+using BlockArrays
+#using MKLSparse # Snabbare om man kör men julia --threads 4
+
+using Preconditioners
+using IncompleteLU
+using AlgebraicMultigrid
+function IterativeSolvers.Identity(a)
+    return IterativeSolvers.Identity()
+end
 
 export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET
 
@@ -190,7 +203,7 @@ struct STRONG_PERIODIC_WITH_PAIRS  <: BCType
 end
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
-struct RVE{dim, CACHE<:RVECache}
+struct RVE{dim, CACHE<:RVECache, LS, PR}
 
     grid::Grid{dim}
     dh::DofHandler{dim}
@@ -221,6 +234,8 @@ struct RVE{dim, CACHE<:RVECache}
     #
     BC_TYPE::BCType
     SOLVE_STYLE::SolveStyle
+    linearsolver::LS
+    preconditioner::PR
     VOLUME_CONSTRAINT::Bool    
     PERFORM_CHECKS::Bool
 end
@@ -259,7 +274,9 @@ function RVE(;
     SOLVE_STYLE::SolveStyle = SOLVE_FULL,
     ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)),
     VOLUME_CONSTRAINT = true,
-    PERFORM_CHECKS = false,) where dim
+    PERFORM_CHECKS = false,
+    LINEAR_SOLVER = nothing,
+    PRECON  = IterativeSolvers.Identity,) where dim
 
     #Get size of rve
     x_center = rvecenter(grid)
@@ -268,6 +285,7 @@ function RVE(;
     end
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
 
+    #TODO: Automatically add face and node sets
     #Check if all cells are included in a cellset
     _check_cellsets(parts, getncells(grid))
 
@@ -340,7 +358,8 @@ function RVE(;
     A◫ = Ω◫ / h
     I◫ = A◫*h^3/12
 
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, VOLUME_CONSTRAINT, PERFORM_CHECKS)
+    #TODO: Automatically build linear solver and precon
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, PERFORM_CHECKS)
 end
 
 
@@ -682,7 +701,31 @@ function _solve_it_schur!(rve::RVE, state::State)
     RHS[:, 1] .= fext_u
     RHS[:, (1:nλμdofs) .+ 1] .= -Ct
 
-    @time LHS = K\RHS
+    LHS = zeros(size(RHS))
+
+    @info "Solving Linear problem with schur compliment"
+    @info "Preconditioner: $((rve.preconditioner))" 
+    @info "Linear solver: $(typeof(rve.linearsolver))"
+
+    print("Precon")
+    @time precon = rve.preconditioner(K)
+    prob   = LinearProblem(K, RHS[:,1])
+    print("Linear cache")
+    @time linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+
+    for i in 1:size(RHS,2)
+        @show i
+        linsolve = LinearSolve.set_b(linsolve, RHS[:,i]) 
+        print("Solving:::")
+        @time sol = solve(linsolve)
+        LHS[:,i] = sol.u
+        #linsolve = sol.cache
+    end
+ 
+    #@show Ferrite.LinearAlgebra.BLAS.set_num_threads(4)
+    #@time LHS[:,1] .= K\RHS[:,1]
+    #error("wait here")
+
     ub = LHS[:,1]               # ub =  K\fext_u
     Uλ = LHS[:,(1:(nλμdofs)) .+ 1] # Uλ = -K\Ct 
 
@@ -703,6 +746,7 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
 
     fext_u = zeros(Float64, ndofs(ch.dh))
 
+    @info "combining"
     KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
               hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
               hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
@@ -711,21 +755,34 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     
     Ferrite._condense_sparsity_pattern!(KK, ch.acs)
 
-    @warn "copying  KK"
-    KKK = KK[ch.prescribed_dofs,:]
-    fff = copy( ff[ch.prescribed_dofs] )
+    #@info "Extracting rows from stiffness matrix"
+    #KKK = KK[ch.prescribed_dofs,:]
+    #fff = copy( ff[ch.prescribed_dofs] )
+    
+    @info "applying"
     apply!(KK, ff, ch)
-    time1 = @elapsed(state.a .= KK\ff)
+
+    @info "Solving Linear problem with full system"
+    @info "Preconditioner: $((rve.preconditioner))" 
+    @info "Linear solver: $(typeof(rve.linearsolver))"
+   
+    prob = LinearProblem(KK, ff)
+    print("Precon:")
+    @time precon = rve.preconditioner(KK)
+    linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+
+    print("Solve")
+    @time sol = solve(linsolve)    
+    state.a .= sol.u 
     apply!(state.a, ch)
-    @info "Solving the full sytem took $time1 seconds"
 
     if rve.BC_TYPE == WEAK_PERIODIC()
-        @assert length(ch.prescribed_dofs) == dim
-        @show size(KKK)
-        @show size(state.a)
-        @show size(fff)
-        reac = KKK*state.a - fff
-        @show reac
+        #@assert length(ch.prescribed_dofs) == dim
+        #@show size(KKK)
+        #@show size(state.a)
+        #@show size(fff)
+        #reac = KKK*state.a - fff
+        #@show reac
     end
 
     #@show KK[68008,:]
@@ -818,7 +875,6 @@ function _solve_it_strong_periodic(rve::RVE, state::State)
     
    
     nλdofs = rve.nλdofs 
-    nudofs = ndofs(ch.dh)
 
     K = matrices.Kuu
     RHS = zeros(Float64, nudofs, 1 + nλdofs)
