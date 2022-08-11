@@ -96,8 +96,8 @@ end
 
 mutable struct Matrices
     Kuu::SparseMatrixCSC{Float64,Int}
-    Kμu::Matrix{Float64}
-    Kλu::Matrix{Float64}
+    Kμu::SparseMatrixCSC{Float64,Int}
+    Kλu::SparseMatrixCSC{Float64,Int}
 
     fuu::Vector{Float64}
     fμu::Vector{Float64}
@@ -151,29 +151,33 @@ struct RVECache{dim, D <: DiffResult}
     fu::Vector{Float64}
     ke::Matrix{Float64}
     fμ::Vector{Float64}
+    ke_μ::Matrix{Float64}
     fλ::Vector{Float64}
+    ke_λ::Matrix{Float64}
     diffresult_u::D#DiffResult
     diffresult_μ::D#DiffResult
     diffresult_λ::D#DiffResult
 end
 
-function RVECache(dim::Int, nnodes, nudofs, nμdofs, nλdofs)
+function RVECache(dim::Int, nnodes, nudofs_per_cell, nμdofs, nλdofs)
 
-    udofs = zeros(Int, nudofs)
+    udofs = zeros(Int, nudofs_per_cell)
     X = zeros(Vec{dim,Float64}, nnodes)
-    ae = zeros(Float64, nudofs)
+    ae = zeros(Float64, nudofs_per_cell)
 
-    ae = zeros(Float64, nudofs)
-    fu = zeros(Float64, nudofs)
-    ke = zeros(Float64, nudofs, nudofs)
+    ae = zeros(Float64, nudofs_per_cell)
+    fu = zeros(Float64, nudofs_per_cell)
+    ke = zeros(Float64, nudofs_per_cell, nudofs_per_cell)
     fμ = zeros(Float64, nμdofs)
+    ke_μ = zeros(Float64, nμdofs, nudofs_per_cell)
     fλ = zeros(Float64, 1)
+    ke_λ = zeros(Float64, 1, nudofs_per_cell)
 
     diffresult_u = DiffResults.JacobianResult(fu, ae)
     diffresult_μ = DiffResults.JacobianResult(fμ, ae)
     diffresult_λ = DiffResults.JacobianResult(fλ, ae)
 
-    return RVECache{dim,typeof(diffresult_u)}(udofs, X, ae, fu ,ke, fμ, fλ, diffresult_u, diffresult_μ, diffresult_λ)
+    return RVECache{dim,typeof(diffresult_u)}(udofs, X, ae, fu ,ke, fμ, ke_μ, fλ, ke_λ, diffresult_u, diffresult_μ, diffresult_λ)
 end
 
 abstract type BCType end
@@ -210,7 +214,7 @@ struct RVE{dim, CACHE<:RVECache}
     I◫::Float64
 
     #
-    nudofs::Int
+    nudofs::Int # Total number of u-dofs
     nμdofs::Int
     nλdofs::Int
 
@@ -290,7 +294,8 @@ function RVE(;
 
     #
     nnodes = getnbasefunctions(ip_geo)
-    nudofs = ndofs_per_cell(dh)
+    nudofs = ndofs(dh)
+    nudofs_per_cell = ndofs_per_cell(dh)
     ip_μ = nothing
     nμdofs = 0
     if BC_TYPE == WEAK_PERIODIC()
@@ -326,7 +331,7 @@ function RVE(;
         nλdofs += dim-1
     end
     
-    cache = RVECache(dim, nnodes, nudofs, nμdofs, nλdofs)
+    cache = RVECache(dim, nnodes, nudofs_per_cell, nμdofs, nλdofs)
     matrices = Matrices(dh, ch, nμdofs, nλdofs)
 
     #
@@ -512,13 +517,12 @@ end
 
 function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS) where {MS,dim}
 
-    (; udofs, X, ae, fu, fλ, ke, diffresult_λ) = cache
+    (; udofs, X, ae, fu, fλ, ke, ke_λ, diffresult_λ) = cache
 
     assembler_u = start_assemble(matrices.Kuu, matrices.fuu, fillzero=false)
 
     #a = zeros(Float64, ndofs(dh)) # TODO: where to put this?
     #materialstates = [[initial_material_state(material) for i in 1:getnquadpoints(cv_u)] for _ in 1:getncells(grid)]
-
     for (localid, cellid) in enumerate(cellset)
         fill!(fu, 0.0)
         fill!(ke, 0.0)
@@ -549,9 +553,14 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
         if VOLUME_CONSTRAINT
             for d in 1:dim-1
                 fill!(fλ, 0.0)
-                diffresult_λ = integrate_fλθ!(diffresult_λ, fλ, cv_u, X, ae, d); 
-                Ke = DiffResults.jacobian(diffresult_λ)
-                matrices.Kλu[[d], udofs] += Ke * (1/I◫)
+                fill!(ke_λ, 0.0)
+                # AD:
+                #diffresult_λ = integrate_fλθ!(diffresult_λ, fλ, cv_u, X, ae, d); 
+                #Ke = DiffResults.jacobian(diffresult_λ)
+
+                # Analytical
+                integrate_fλθ_2!(ke_λ, fλ, cv_u, X, ae, d); 
+                matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
             end
         end
 
@@ -564,7 +573,7 @@ end
 
 function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Float64}) where dim
 
-    (; udofs, X, ae, fμ, diffresult_μ) = rve.cache
+    (; udofs, X, ae, fμ, ke_μ, diffresult_μ) = rve.cache
     (; grid, dh, fv_u, ip_μ)    = rve
     (; matrices) = rve
     (; diffresult_μ) = rve.cache
@@ -578,8 +587,6 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
     Γ⁺ = union( getfaceset(grid, "Γ⁺") ) |> collect
     Γ⁻ = union( getfaceset(grid, "Γ⁻") ) |> collect
     
-    #a = zeros(Float64, ndofs(dh)) # TODO: where to put this?
-
     @info "Gamma +"
     for (cellid, fidx) in Γ⁺
         celldofs!(udofs, dh, cellid)
@@ -588,12 +595,17 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
 
         reinit!(fv_u, X, fidx)
 
-        fill!(fμ, 0.0)
-        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
+        # AD:
+        #fill!(fμ, 0.0)
+        #diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
+        #ke_μ2 = DiffResults.jacobian(diffresult_μ)
 
-        #fe = DiffResults.value(diffresult_μ)
-        Ke = DiffResults.jacobian(diffresult_μ)
-        matrices.Kμu[μdofs, udofs] += -Ke  * (1/A◫) 
+        # Analytical
+        fill!(ke_μ, 0.0)
+        fill!(fμ, 0.0)
+        integrate_fμu_2!(ke_μ, fμ, fv_u, ip_μ, X, ae);
+
+        matrices.Kμu[μdofs, udofs] += -ke_μ  * (1/A◫) 
 
         fill!(fμ, 0.0)
         integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
@@ -609,12 +621,17 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         
         reinit!(fv_u, X, fidx)
         
+        # AD:
+        #fill!(fμ, 0.0)
+        #diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
+        #ke_μ2 = DiffResults.jacobian(diffresult_μ)
+        
+        # Analytical:
+        fill!(ke_μ, 0.0)
         fill!(fμ, 0.0)
-        diffresult_μ = integrate_fμu!(diffresult_μ, fμ, fv_u, ip_μ, X, ae);
-
-        #fe = DiffResults.value(diffresult_μ)
-        Ke = DiffResults.jacobian(diffresult_μ)
-        matrices.Kμu[μdofs, udofs] += Ke  * (1/A◫) 
+        integrate_fμu_2!(ke_μ, fμ, fv_u, ip_μ, X, ae);
+        
+        matrices.Kμu[μdofs, udofs] += ke_μ  * (1/A◫) 
 
         fill!(fμ, 0.0)
         integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
@@ -641,7 +658,7 @@ end
 function _solve_it_schur!(rve::RVE, state::State)
 
     (; dh, ch,  matrices)   = rve
-    (; nμdofs, nλdofs) = rve
+    (; nudofs, nμdofs, nλdofs) = rve
 
     nλdofs = rve.nλdofs 
     nμdofs = rve.nμdofs 
@@ -777,7 +794,7 @@ end
 function _solve_it_strong_periodic(rve::RVE, state::State)
 
     (; dh, ch, matrices)   = rve
-    (; nμdofs, nλdofs) = rve
+    (; nudofs, nμdofs, nλdofs) = rve
 
     #=
     fext_u = zeros(Float64, ndofs(ch.dh))

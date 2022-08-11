@@ -23,12 +23,6 @@ function fu!(f::Vector{T}, cv_u::CellVectorValues{dim}, material::MaterialModels
 
 end
 
-function integrate_fλu!(result::DiffResult, y::Vector{T}, cv_u::CellVectorValues, ae::Vector{Float64}, dir::Int) where T
-    f!(y, ae) = fλu!(y, cv_u, ae, dir)
-    result = ForwardDiff.jacobian!(result, f!, y, ae);
-    return result
-end
-
 function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, ae::Vector{T}) where {dim,T}
     for iqp in 1:getnquadpoints(cv_u)
         
@@ -55,6 +49,13 @@ function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVect
 
 end
 
+
+function integrate_fλu!(result::DiffResult, y::Vector{T}, cv_u::CellVectorValues, ae::Vector{Float64}, dir::Int) where T
+    f!(y, ae) = fλu!(y, cv_u, ae, dir)
+    result = ForwardDiff.jacobian!(result, f!, y, ae);
+    return result
+end
+
 function fλu!(f::Vector{T}, cv_u::CellVectorValues{dim}, ae::Vector{T}, dir::Int) where {dim,T}
     e = basevec(Vec{dim}, dir)
     for iqp in 1:getnquadpoints(cv_u)
@@ -63,6 +64,20 @@ function fλu!(f::Vector{T}, cv_u::CellVectorValues{dim}, ae::Vector{T}, dir::In
         f[1] += (u ⋅ e) * dV 
     end
 end
+
+function integrate_fλu_2!(ke::Matrix{T}, f::Vector{T}, cv_u::CellVectorValues{dim}, ae::Vector{T}, dir::Int) where {dim,T}
+    e = basevec(Vec{dim}, dir)
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        u = function_value(cv_u, iqp, ae)
+        f[1] += (u ⋅ e) * dV 
+        for i in 1:getnbasefunctions(cv_u)
+            Ni = shape_value(cv_u, iqp, i)
+            ke[1,i] += (Ni ⋅ e) * dV
+        end
+    end
+end
+
 
 function test_fλu()
     ip_u = Lagrange{2,RefCube,1}()
@@ -100,6 +115,21 @@ function fλθ!(f::Vector{T}, cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}
     end
 end
 
+function integrate_fλθ_2!(ke::Matrix{T}, f::Vector{T}, cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{T}, dir::Int) where {dim,T}
+    e = basevec(Vec{dim}, dir)
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        u = function_value(cv_u, iqp, ae)
+        xyz = spatial_coordinate(cv_u, iqp, X)
+        z = xyz[dim]
+        f[1] += (u ⋅ e*z) * dV 
+        for i in 1:getnbasefunctions(cv_u)
+            Ni = shape_value(cv_u, iqp, i)
+            ke[1,i] += (Ni ⋅ e*z) * dV
+        end 
+    end
+end
+
 function integrate_fμu!(result::DiffResult, y::Vector, fv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}) where {dim}
     f!(y, ae) = fμu!(y, fv_u, ip_μ, X, ae)
     result = ForwardDiff.jacobian!(result, f!, y, ae);
@@ -117,6 +147,26 @@ function fμu!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite.Interpolatio
         for i in 1:getnbasefunctions(ip_μ)
             δμ = shape_value(ip_μ, i, n, z)
             f[i] += (δμ ⋅ u) * dV 
+        end
+    end
+    
+end
+
+function integrate_fμu_2!(ke::Matrix{T}, f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ae::Vector{T}) where {T,dim}
+
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        u = function_value(cv_u, iqp, ae)
+        xyz = spatial_coordinate(cv_u, iqp, X)
+        z = xyz[dim]
+        n = getnormal(cv_u, iqp)
+        for i in 1:getnbasefunctions(ip_μ)
+            δμ = shape_value(ip_μ, i, n, z)
+            f[i] += (δμ ⋅ u) * dV 
+            for j in 1:getnbasefunctions(cv_u)
+                Nj = shape_value(cv_u, iqp, j)
+                ke[i, j] += (δμ ⋅ Nj) * dV 
+            end
         end
     end
     
