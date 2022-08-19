@@ -599,6 +599,7 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
     (; udofs, X, ae, fu, fλ, ke, ke_λ, diffresult_λ) = cache
 
     assembler_u = start_assemble(matrices.Kuu, matrices.fuu, fillzero=false)
+    assembler_λ = start_assemble()
 
     #a = zeros(Float64, ndofs(dh)) # TODO: where to put this?
     #materialstates = [[initial_material_state(material) for i in 1:getnquadpoints(cv_u)] for _ in 1:getncells(grid)]
@@ -639,7 +640,7 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
 
                 # Analytical
                 integrate_fλθ_2!(ke_λ, fλ, cv_u, X, ae, d); 
-                matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
+                assemble!(assembler_λ, [d], udofs, ke_λ * (1/I◫)) #matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
             end
         end
 
@@ -657,6 +658,8 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
     (; matrices) = rve
     (; diffresult_μ) = rve.cache
     (; A◫) = rve
+
+    assembler_μ = start_assemble()
 
     μdofs = collect(1:rve.nμdofs)
 
@@ -684,7 +687,7 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         fill!(fμ, 0.0)
         integrate_fμu_2!(ke_μ, fμ, fv_u, ip_μ, X, ae);
 
-        matrices.Kμu[μdofs, udofs] += -ke_μ  * (1/A◫) 
+        assemble!(assembler_μ, μdofs, udofs, -ke_μ  * (1/A◫) ) #matrices.Kμu[μdofs, udofs] += -ke_μ  * (1/A◫) 
 
         fill!(fμ, 0.0)
         integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
@@ -710,13 +713,14 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         fill!(fμ, 0.0)
         integrate_fμu_2!(ke_μ, fμ, fv_u, ip_μ, X, ae);
         
-        matrices.Kμu[μdofs, udofs] += ke_μ  * (1/A◫) 
+        assemble!(assembler_μ, μdofs, udofs, ke_μ  * (1/A◫) ) #matrices.Kμu[μdofs, udofs] += ke_μ  * (1/A◫) 
 
         fill!(fμ, 0.0)
         integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
         matrices.fext_μ[μdofs] += -fμ * (1/A◫)
     end
 
+    matrices.Kμu = end_assemble(assembler_μ)
 end
 
 function solve_it!(rve::RVE, state::State)
@@ -1204,5 +1208,22 @@ include("response.jl")
 export MacroParameters
 export RVESubPartState
 export State
+#TODO: move to Ferrite?
+function Ferrite.assemble!(a::Ferrite.Assembler{T}, rowdofs::AbstractVector{Int}, coldofs::AbstractVector{Int}, Ke::AbstractMatrix{T}) where {T}
+    nrows = length(rowdofs)
+    ncols = length(coldofs)
+
+    @assert(size(Ke,1) == nrows)
+    @assert(size(Ke,2) == ncols)
+
+    append!(a.V, Ke)
+    @inbounds for i in 1:ncols
+        for j in 1:nrows
+            push!(a.J, coldofs[i])
+            push!(a.I, rowdofs[j])
+        end
+    end
+end
+
 end
 
