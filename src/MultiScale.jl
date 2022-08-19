@@ -745,7 +745,6 @@ function _solve_it_schur!(rve::RVE, state::State)
 
     nλdofs = rve.nλdofs 
     nμdofs = rve.nμdofs 
-    nudofs = ndofs(ch.dh)
     nλμdofs = nλdofs + nμdofs
 
     K = matrices.Kuu
