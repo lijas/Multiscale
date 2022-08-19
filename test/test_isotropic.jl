@@ -1,6 +1,6 @@
 
 
-function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiScale.MacroParameters, material::AbstractMaterial, bctype::MultiScale.BCType)
+function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiScale.MacroParameters, material::AbstractMaterial, bctype::MultiScale.BCType, solvestyle::MultiScale.SolveStyle)
     
     elsize = 0.5
 
@@ -33,6 +33,7 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 cellset = 1:getncells(grid) |> collect
             )],
         BC_TYPE = bctype,
+        SOLVE_STYLE = solvestyle,
         PERFORM_CHECKS = true
     )
 
@@ -66,12 +67,13 @@ end
     
     N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
 
-    Ls = [5.0, 20.0]#, 30.0]#, 4.0, 7.0]
+    Ls = [5.0, 10.0]#, 30.0]#, 4.0, 7.0]
+    solvestyles = [MultiScale.SOLVE_FULL, MultiScale.SOLVE_FULL, MultiScale.SOLVE_SCHUR]
     bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), STRONG_PERIODIC()]#, DIRICHLET(),]
-    for bctype in bctypes
+    for (solvestyle, bctype) in zip(solvestyles, bctypes)
         for L in Ls
             println("Length: $L")
-            N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material, bctype=bctype)
+            N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material, bctype=bctype, solvestyle=solvestyle)
             push!(Ns, N)
             push!(Ms, M)
             push!(Vs, V)
