@@ -2,7 +2,8 @@ export AABB, SampleDomain, SphericalInclusion
 export generate_random_domain, cutout_inplane_subdomain, get_qp_domaintags
 export plotdomain, plotdomain!, plotdomain_topview!, plotdomain_sideview!
 
-#using Plots; plotly()
+#Used for contact detection of cylinders
+using SolidModeling: SolidModeling, Solid, bintersect
 
 abstract type AbstractInclusion{dim} end
 
@@ -70,27 +71,42 @@ point_inside_inclusion(x::Vec, s::SphericalInclusion) =  norm(s.pos - x) ≤ s.r
 struct CylindricalInclusion{dim} <: AbstractInclusion{dim}
     radius::Float64
     length::Float64
-    pos::Vec{dim,Float64}
+    pos::Vec{dim,Float64} #Pos is the center of the fibre
     dir::Vec{dim,Float64}
+    
+    #Use a hexahedron from the Package SolidModeling for simplified contact search
+    #Contact detection for cylinders was a bit tricky to implement...
+    contact_hexahedron::SolidModeling.Solid
+
     function CylindricalInclusion(radius::Float64, length::Float64, pos::Vec{dim,Float64}, dir::Vec{dim,Float64}) where dim
         @assert radius > 0.0
         @assert length > 0.0
         @assert norm(dir) ≈ 1.0
-        return new{dim}(radius, length, pos, dir)
+        contact_hexahedron = create_hexahedron(radius,length,pos,dir)
+        return new{dim}(radius, length, pos, dir, contact_hexahedron)
     end
 end
 
 volume(i::CylindricalInclusion{3}) = π * i.radius^2 * i.length
 volume(i::CylindricalInclusion{2}) = i.length*i.radius*2
 
-function generate_random_inclusion(::Type{CylindricalInclusion{2}}, (radius_μ, radius_σ, length_μ, length_σ), pos::Vec{2})
+function generate_random_inclusion(::Type{CylindricalInclusion{dim}}, (radius_μ, radius_σ, length_μ, length_σ), pos::Vec{dim}) where {dim}
     data_r = Uniform(radius_μ - radius_σ, radius_μ + radius_σ)
     data_l = Uniform(length_μ - length_σ, length_μ + length_σ)
     r = rand(data_r)
     l = rand(data_l)
-    dir = Vec((1.0,0.0))
+
+    #Create the fiber pointing in a random direction in-plane
+    dir = Vec{3}((rand(), rand(), 0.0))
+    dir /= norm(dir)
+
+    if dim == 2
+        dir = Vec((1.0,0.0))
+    end
+
     return CylindricalInclusion(r, l, pos, dir)
 end
+
 
 function offset_inclusion(c::CylindricalInclusion{dim}, offset::Vec{dim}) where {dim}
     return CylindricalInclusion(c.radius, c.length, c.pos - offset, c.dir)
@@ -104,6 +120,23 @@ function point_inside_inclusion(pos::Vec, c::CylindricalInclusion{2})
 
     return (x < pos[1] < x + w) && (y < pos[2] < y+h)
 end
+
+function point_inside_inclusion(X::Vec, c::CylindricalInclusion{3}) 
+    t1 = (X - c.pos)⋅c.dir
+
+    if t1 > -c.length/2 && t1 < c.length/2     
+        Q1 = c.pos + t1*c.dir 
+        dir = X - Q1
+        dist = norm(dir)
+
+        if dist < c.radius
+            return true
+        end
+    end
+
+    return false
+end
+
 
 function offset_domain(sd::SampleDomain, offset)
 
@@ -155,6 +188,7 @@ function generate_random_domain(
             continue
         else
             nadded += 1
+            @info "Added inclusion: $(nadded)/$ninclusions"
             push!(inclusions, new_inclusion)
         end
         
@@ -204,6 +238,96 @@ function collides_with_other_inclusion(inclusions::Vector{CylindricalInclusion{2
         if collision
             return true
         end
+    end
+
+    return false
+end
+
+function collides_with_other_inclusion(inclusions::Vector{CylindricalInclusion{3}}, ni::CylindricalInclusion{3})
+
+    i2x = ni.pos[1] - ni.length/2
+    i2y = ni.pos[2] - ni.radius
+    i2w = ni.length
+    i2h = ni.radius*2
+
+    for i1 in inclusions
+        if _collides2(i1, ni)
+            return true
+        end 
+    end
+
+    return false
+end
+
+#Contact algorithm for Hexahedrons, not cylinders
+function _collides2(a::CylindricalInclusion{3}, b::CylindricalInclusion{3})
+    output = bintersect(a.contact_hexahedron, b.contact_hexahedron)
+    return length(output.vertices) > 0
+end
+
+#Note there are edge cases where contact is not detected.
+function _collides(a::CylindricalInclusion{3}, b::CylindricalInclusion{3})
+    #https://math.stackexchange.com/questions/1993953/closest-points-between-two-lines
+
+    offset_radius = a.radius*0.2
+    offset_length_a = a.length*0.1
+    offset_length_b = b.length*0.1
+
+    #Should work for any orientation with small modification, but check that fibres are only in-plane
+    @assert Tensors.cross(b.dir, a.dir)[1] ≈ 0.0
+    @assert Tensors.cross(b.dir, a.dir)[2] ≈ 0.0
+
+    dir3 = Tensors.cross(b.dir, a.dir)
+
+    #special cas: Check if parallel
+    if norm(dir3) ≈ 0.0
+        dir = a.dir
+
+        aξ = a.pos ⋅ dir
+        bξ = b.pos ⋅ dir
+        a1 = aξ - a.length/2
+        a2 = aξ + a.length/2
+        b1 = bξ - b.length/2
+        b2 = bξ + b.length/2
+
+        #Check overlap in fiber directions
+        if a1 <= b2 && b1 <= a2
+
+            #Check overlap of radius
+            #Get closest point between cylinders
+            aξ = (b.pos - a.pos) ⋅ dir
+            cp = a.pos + aξ*dir
+            
+            dist = norm(cp - b.pos)
+            if dist < (a.radius+b.radius)
+                return true
+            end
+        end
+        return false
+    end
+
+    A = zeros(Float64, 3, 3)
+    A[:,1] .= a.dir
+    A[:,2] .= -b.dir
+    A[:,3] .= dir3
+    t1,t2,t3 = A\(b.pos - a.pos)
+
+    Q1 = a.pos + t1*a.dir
+    Q2 = b.pos + t2*b.dir
+    dist = t3 * norm(dir3)
+
+    if (t1 < -a.length/2 - offset_length_a || t1 > a.length/2 + offset_length_a)
+        return false
+    end
+
+    if (t2 < -b.length/2 + offset_length_b || t2 > b.length/2 + offset_length_b)
+        return false
+    end
+
+    #@show dist
+    #@show dist = norm(Q1 - Q2)
+    if dist < (a.radius + b.radius + offset_radius)
+        return true
     end
 
     return false
@@ -436,6 +560,53 @@ function plotinclusion!(fig, cyl::CylindricalInclusion; kwargs...)
     plot!(fig, xc, yc; kwargs...)
 end
 
+function create_hexahedron(radius::Float64, length::Float64, pos::Vec{dim,Float64}, dir::Vec{dim,Float64}) where dim
+
+    @assert(norm(dir) ≈ 1.0)
+
+    radius *= 1.2
+    length *= 1.1
+
+    θ = acos(dir ⋅ Vec((1.0, 0.0, 0.0)))
+    xMin = pos[1] - length/2
+    xMax = pos[1] + length/2
+    yMin = pos[2] - radius
+    yMax = pos[2] + radius
+    zMin = pos[3] - radius
+    zMax = pos[3] + radius
+
+    m = pos
+
+    c = cos(θ)
+    s = sin(θ)
+
+    R = [c  -s   0.0; 
+         s   c   0.0; 
+         0.0 0.0 1.0 ]
+
+    #Rotate and translate
+    v1 = SolidModeling.Vertex(R*([xMin, yMin, zMax]-m) + m)
+    v2 = SolidModeling.Vertex(R*([xMin, yMax, zMax]-m) + m)
+    v3 = SolidModeling.Vertex(R*([xMax, yMax, zMax]-m) + m)
+    v4 = SolidModeling.Vertex(R*([xMax, yMin, zMax]-m) + m)
+    v5 = SolidModeling.Vertex(R*([xMin, yMin, zMin]-m) + m)
+    v6 = SolidModeling.Vertex(R*([xMin, yMax, zMin]-m) + m)
+    v7 = SolidModeling.Vertex(R*([xMax, yMax, zMin]-m) + m)
+    v8 = SolidModeling.Vertex(R*([xMax, yMin, zMin]-m) + m)
+
+    f1p = SolidModeling.Polygon([v1, v4, v3, v2], SolidModeling.fromPoints(v1.pos, v4.pos, v3.pos))
+    f2p = SolidModeling.Polygon([v7, v8, v5, v6], SolidModeling.fromPoints(v7.pos, v8.pos, v5.pos))
+    f3p = SolidModeling.Polygon([v1, v2, v6, v5], SolidModeling.fromPoints(v1.pos, v2.pos, v6.pos))
+    f4p = SolidModeling.Polygon([v2, v3, v7, v6], SolidModeling.fromPoints(v2.pos, v3.pos, v7.pos))
+    f5p = SolidModeling.Polygon([v3, v4, v8, v7], SolidModeling.fromPoints(v3.pos, v4.pos, v8.pos))
+    f6p = SolidModeling.Polygon([v4, v1, v5, v8], SolidModeling.fromPoints(v4.pos, v1.pos, v5.pos))
+
+    polys = [f1p, f2p, f3p, f4p, f5p, f6p];
+
+    return SolidModeling.fromPolygons(polys);
+
+end
+
 function test2d()
 
     dim = 2
@@ -511,3 +682,43 @@ function test3d()
 end
 
 
+function test3d_cyl()
+
+    sd = MultiScale.generate_random_domain(MultiScale.CylindricalInclusion{3}, (radius_μ = 0.4, raduis_σ = 0.00001, length_μ=1.0, length_σ = 0.001),  AABB(Vec((0.0, 0.0, 0.0)), Vec((40.0,40.0,40.0))), 100, max_ntries = 20000; allow_outside_domain = true, allow_collisions=false);
+
+    dim = 3
+    #L◫ = 2.0
+    
+    elsize = 1.0
+    subd = sd#cutout_inplane_subdomain(sd, L◫)
+
+    #Size
+    h = MultiScale.height(subd.domain)
+    L◫ = MultiScale.side_length(subd.domain, dim = 1)
+    dim==3 && @assert( L◫ == MultiScale.side_length(subd.domain, dim = 2) )
+
+    #Mesh
+    nelx = round(Int, L◫/elsize)
+    nelz = round(Int, h/elsize)
+    nels =  ntuple(d-> d==dim ? nelz : nelx, dim) 
+    corner = Vec{dim,Float64}( d-> d == dim ? h/2 : L◫/2 )
+    celltype = dim == 2 ? Quadrilateral : Hexahedron
+    grid = generate_grid(celltype, nels, -corner, corner) 
+
+    #Cellvalues
+    ip = Ferrite.default_interpolation(celltype)
+    shape = Ferrite.getrefshape(ip)
+    qr = QuadratureRule{dim,shape}(2)
+    cv = CellScalarValues(qr, ip)
+    
+    #Get the material in each qp in each element
+    celldomains = get_qp_domaintags(grid, subd, cv)
+
+    #Add inclusions cellset for vtk visulations
+    _celldomains = [maximum(col) for col in eachcol(celldomains)]
+    grid.cellsets["inclusions"] = findall(i -> i == MultiScale.INCLUSION, _celldomains) |> Set
+
+    vtk_grid("mygridsave", grid) do vtk
+        vtk_cellset(vtk, grid)
+    end
+end
