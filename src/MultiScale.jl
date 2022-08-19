@@ -237,6 +237,7 @@ struct RVE{dim, CACHE<:RVECache, LS, PR}
     linearsolver::LS
     preconditioner::PR
     VOLUME_CONSTRAINT::Bool    
+    EXTRA_PROLONGATION::Bool
     PERFORM_CHECKS::Bool
 end
 
@@ -274,6 +275,7 @@ function RVE(;
     SOLVE_STYLE::SolveStyle = SOLVE_FULL,
     ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)),
     VOLUME_CONSTRAINT = true,
+    EXTRA_PROLONGATION = false,
     PERFORM_CHECKS = false,
     LINEAR_SOLVER = nothing,
     PRECON  = IterativeSolvers.Identity,) where dim
@@ -359,7 +361,7 @@ function RVE(;
     I◫ = A◫*h^3/12
 
     #TODO: Automatically build linear solver and precon
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, PERFORM_CHECKS)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, EXTRA_PROLONGATION, PERFORM_CHECKS)
 end
 
 
@@ -400,8 +402,63 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     @time _assemble_volume!(rve, state)
 
     @info "Solving it"
-    a = solve_it!(rve, state)
-    return a
+function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::MacroParameters, with_extra) where {dim,T}
+
+    (; ∇u, ∇w, ∇θ, u, w, θ) = macroparamters
+    
+    d = dim-1
+
+    e = basevec(Vec{dim,Float64})
+    z = -x[dim]
+
+    φu(α) = e[α]
+    φh(α,β) = ((x - x̄) ⋅ e[β])*e[α]
+
+    φw() = e[dim]
+    φg(α) = ((x - x̄) ⋅ e[α])*e[3]
+
+    φθ(α) = -z*e[α]
+    
+    function φκ(α,β) 
+        _φ = zero(Vec{dim,T})
+        _φ = -z*((x - x̄)⋅e[β])*e[α] 
+
+        if with_extra 
+            _φ -= 0.5*( (e[α]⊗e[β])⊡((x-x̄)⊗(x-x̄)) )*e[3]
+        end
+
+        return _φ
+    end
+
+    u = zero(Vec{dim,T})
+
+    #
+    for α in 1:d
+        u += φu(α) * u[α]
+    end
+
+    for α in 1:d, β in 1:d
+        u += φh(α,β) * ∇u[α,β]
+    end
+
+    #
+    u = w*φw()
+    
+    for α in 1:d
+        u += φg(α) * ∇w[α]
+    end
+
+    #
+    for α in 1:d
+        u += φθ(α) * θ[α]
+    end
+
+    for α in 1:d, β in 1:d
+        u += φκ(α,β) * ∇θ[α,β]
+    end
+
+    return u
+
 end
 
 function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::State) where dim
@@ -440,7 +497,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃),#[1:dim-1],
+            #(x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃),#[1:dim-1],
+            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
             1:dim#(dim-1)
         )
         add!(rve.ch, dbc)
@@ -458,7 +516,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) ->  ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[1:dim-1],
+            #(x, t) ->  ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[1:dim-1],
+            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
             1:(dim-1)
         )
         add!(rve.ch, dbc)
@@ -467,7 +526,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[dim],#zero(Vec{dim,Float64}),
+            #(x, t) -> ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[dim],#zero(Vec{dim,Float64}),
+            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
             [dim]#(dim-1)
         )
         add!(rve.ch, dbc)
