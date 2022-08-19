@@ -409,7 +409,7 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
     d = dim-1
 
     e = basevec(Vec{dim,Float64})
-    z = -x[dim]
+    z = x[dim]
 
     φu(α) = e[α]
     φh(α,β) = ((x - x̄) ⋅ e[β])*e[α]
@@ -424,7 +424,7 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
         _φ = -z*((x - x̄)⋅e[β])*e[α] 
 
         if with_extra 
-            _φ -= 0.5*( (e[α]⊗e[β])⊡((x-x̄)⊗(x-x̄)) )*e[3]
+            _φ += 0.5*( (e[α]⊗e[β])⊡((x-x̄)⊗(x-x̄)) )*e[3]
         end
 
         return _φ
