@@ -35,8 +35,7 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        #SOLVE_STYLE = MultiScale.SOLVE_SCHUR,
-        BC_TYPE = MultiScale.DIRICHLET()
+        BC_TYPE = MultiScale.STRONG_PERIODIC()
     )
 
     state = State(rve)

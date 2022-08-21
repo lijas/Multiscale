@@ -402,6 +402,10 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     @time _assemble_volume!(rve, state)
 
     @info "Solving it"
+    time = @elapsed(solve_it!(rve, state))
+    return time
+end
+
 function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::MacroParameters, with_extra) where {dim,T}
 
     (; ∇u, ∇w, ∇θ, u, w, θ) = macroparamters
@@ -649,6 +653,8 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
         end
     end
 
+    matrices.Kλu = end_assemble(assembler_λ)
+
 end
 
 function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Float64}) where dim
@@ -764,27 +770,31 @@ function _solve_it_schur!(rve::RVE, state::State)
     RHS[:, 1] .= fext_u
     RHS[:, (1:nλμdofs) .+ 1] .= -Ct
 
-    LHS = zeros(size(RHS))
 
-    @info "Solving Linear problem with schur compliment"
-    @info "Preconditioner: $((rve.preconditioner))" 
-    @info "Linear solver: $(typeof(rve.linearsolver))"
+    if rve.linearsolver === nothing
+        LHS = K\RHS
+    else
+        LHS = zeros(size(RHS))
 
-    print("Precon")
-    @time precon = rve.preconditioner(K)
-    prob   = LinearProblem(K, RHS[:,1])
-    print("Linear cache")
-    @time linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+        @info "Solving Linear problem with schur compliment"
+        @info "Preconditioner: $((rve.preconditioner))" 
+        @info "Linear solver: $(typeof(rve.linearsolver))"
 
-    for i in 1:size(RHS,2)
-        @show i
-        linsolve = LinearSolve.set_b(linsolve, RHS[:,i]) 
-        print("Solving:::")
-        @time sol = solve(linsolve)
-        LHS[:,i] = sol.u
-        #linsolve = sol.cache
+        print("Precon")
+        @time precon = rve.preconditioner(K)
+        prob   = LinearProblem(K, RHS[:,1])
+        print("Linear cache")
+        @time linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+
+        for i in 1:size(RHS,2)
+            @show i
+            linsolve = LinearSolve.set_b(linsolve, RHS[:,i]) 
+            print("Solving:::")
+            @time sol = solve(linsolve)
+            LHS[:,i] = sol.u
+            #linsolve = sol.cache
+        end
     end
- 
     #@show Ferrite.LinearAlgebra.BLAS.set_num_threads(4)
     #@time LHS[:,1] .= K\RHS[:,1]
     #error("wait here")
@@ -810,9 +820,13 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     fext_u = zeros(Float64, ndofs(ch.dh))
 
     @info "combining"
-    KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
-              hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
-              hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
+    #KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
+    #          hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
+    #          hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
+
+    KK = [matrices.Kuu matrices.Kμu' matrices.Kλu'; 
+          matrices.Kμu spzeros(Float64, nμdofs, nμdofs) spzeros(Float64,nμdofs,nλdofs);
+          matrices.Kλu spzeros(Float64, nλdofs, nμdofs) spzeros(Float64,nλdofs,nλdofs)]
 
     ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
     
@@ -825,18 +839,24 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     @info "applying"
     apply!(KK, ff, ch)
 
-    @info "Solving Linear problem with full system"
-    @info "Preconditioner: $((rve.preconditioner))" 
-    @info "Linear solver: $(typeof(rve.linearsolver))"
-   
-    prob = LinearProblem(KK, ff)
-    print("Precon:")
-    @time precon = rve.preconditioner(KK)
-    linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+    if rve.linearsolver === nothing
+        state.a .= KK\ff
+    else
 
-    print("Solve")
-    @time sol = solve(linsolve)    
-    state.a .= sol.u 
+        @info "Solving Linear problem with full system"
+        @info "Preconditioner: $((rve.preconditioner))" 
+        @info "Linear solver: $(typeof(rve.linearsolver))"
+    
+        prob = LinearProblem(KK, ff)
+        print("Precon:")
+        @time precon = rve.preconditioner(KK)
+        linsolve = LinearSolve.init(prob, rve.linearsolver, Pl = precon, verbose=true)
+
+        print("Solve")
+        @time sol = solve(linsolve)    
+        state.a .= sol.u 
+    end
+
     apply!(state.a, ch)
 
     if rve.BC_TYPE == WEAK_PERIODIC()
