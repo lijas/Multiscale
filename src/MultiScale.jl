@@ -116,6 +116,8 @@ mutable struct Matrices
     fμu::Vector{Float64}
     fλu::Vector{Float64}
 
+    fext_u::Vector{Float64}
+    uM    ::Vector{Float64}
     fext_μ::Vector{Float64}
     fext_λ::Vector{Float64}
 
@@ -125,7 +127,20 @@ end
 
 function Matrices(dh::DofHandler, ch::ConstraintHandler, nμ::Int, nλ::Int)
     Kuu = spzeros(Float64, ndofs(dh), ndofs(dh)) #create_sparsity_pattern(dh, ch)
-    return Matrices(Kuu, spzeros(nμ, ndofs(dh)), spzeros(nλ, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, ndofs(dh)), zeros(Float64, nμ), zeros(Float64, nλ), [0.0], [0.0])
+    return Matrices(
+        Kuu, 
+        spzeros(nμ, ndofs(dh)), 
+        spzeros(nλ, ndofs(dh)), 
+        zeros(Float64, ndofs(dh)), 
+        zeros(Float64, ndofs(dh)), 
+        zeros(Float64, ndofs(dh)), 
+        zeros(Float64, ndofs(dh)),
+        zeros(Float64, ndofs(dh)),
+        zeros(Float64, nμ), 
+        zeros(Float64, nλ), 
+        [0.0], 
+        [0.0]
+    )
 end
 
 
@@ -239,6 +254,7 @@ struct RVE{dim, CACHE<:RVECache, LS, PR}
     VOLUME_CONSTRAINT::Bool    
     EXTRA_PROLONGATION::Bool
     PERFORM_CHECKS::Bool
+    SOLVE_FOR_FLUCT::Bool
 end
 
 function rvesize(grid::Grid{dim}; dir=d) where dim
@@ -277,6 +293,7 @@ function RVE(;
     VOLUME_CONSTRAINT = true,
     EXTRA_PROLONGATION = false,
     PERFORM_CHECKS = false,
+    SOLVE_FOR_FLUCT = false,
     LINEAR_SOLVER = nothing,
     PRECON  = IterativeSolvers.Identity,) where dim
 
@@ -361,7 +378,7 @@ function RVE(;
     I◫ = A◫*h^3/12
 
     #TODO: Automatically build linear solver and precon
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, EXTRA_PROLONGATION, PERFORM_CHECKS)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, EXTRA_PROLONGATION, PERFORM_CHECKS, SOLVE_FOR_FLUCT)
 end
 
 
@@ -399,10 +416,15 @@ function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) whe
     _apply_macroscale!(rve, macroscale, state)
 
     @info "assembling volume"
-    @time _assemble_volume!(rve, state)
+    @time _assemble_volume!(rve, macroscale, state)
 
+    @info "Evaluating uM"
+    evaluate_uᴹ!(rve.matrices.uM, rve, macroscale)
+    
     @info "Solving it"
     time = @elapsed(solve_it!(rve, state))
+
+
     return time
 end
 
@@ -473,6 +495,9 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     e₃ = basevec(Vec{dim}, dim)
 
+    uᴹ = prolongation
+    uˢ = rve.SOLVE_FOR_FLUCT
+
     reset_constrainthandler!(rve.ch)
 
     if rve.BC_TYPE == WEAK_PERIODIC()
@@ -484,8 +509,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> [macroscale.u..., macroscale.w],
-            1:dim#(dim-1)
+            (x, t) -> uˢ ? zero(Vec{dim}) : [macroscale.u..., macroscale.w],
+            1:dim
         )
         add!(rve.ch, dbc)
 
@@ -501,9 +526,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            #(x, t) ->  (∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃),#[1:dim-1],
-            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
-            1:dim#(dim-1)
+            (x, t) -> uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            1:dim
         )
         add!(rve.ch, dbc)
 
@@ -520,8 +544,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            #(x, t) ->  ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[1:dim-1],
-            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
+            (x, t) -> uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
             1:(dim-1)
         )
         add!(rve.ch, dbc)
@@ -530,9 +553,8 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            #(x, t) -> ((∇u⋅(x-x̄) - x[dim]*∇θ⋅(x-x̄) + ∇w⋅(x-x̄) * e₃))[dim],#zero(Vec{dim,Float64}),
-            (x, t) -> prolongation(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
-            [dim]#(dim-1)
+            (x, t) -> uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
+            [dim]
         )
         add!(rve.ch, dbc)
 
@@ -548,18 +570,19 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         masternode = getnodeset(rve.grid, "cornerset") |> first
 
         @info "Adding linear constraints"
-        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
     elseif rve.BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
+        error("This BC is unused and not tested... Please check implementation and update code. ")
         masternode = getnodeset(rve.grid, "cornerset") |> first
         nodepairs = rve.BC_TYPE.nodepairs
         
         @info "Adding linear constraints"
-        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode)
+        add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
     end
 
     if rve.VOLUME_CONSTRAINT
         for d in 1:dim-1
-            rve.matrices.fext_λ[d] +=  -macroscale.θ[d]
+            rve.matrices.fext_λ[d] +=  uˢ ? 0.0 : -macroscale.θ[d]
         end
     end
 
@@ -573,11 +596,12 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
 end
 
-function _assemble_volume!(rve::RVE, state::State)
+function _assemble_volume!(rve::RVE, macroparamters::MacroParameters, state::State)
 
     fill!(rve.matrices.Kuu, 0.0)
     fill!(rve.matrices.Kλu, 0.0)
     fill!(rve.matrices.fuu, 0.0)
+    fill!(rve.matrices.fext_u, 0.0)
     fill!(rve.matrices.check_x, 0.0)
     fill!(rve.matrices.check_z, 0.0)
 
@@ -586,7 +610,7 @@ function _assemble_volume!(rve::RVE, state::State)
         cellset = part.cellset
         materialstates = state.partstates[partid].materialstates
 
-        _assemble!(material, materialstates, cellset, state.a, rve.grid, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS)
+        _assemble!(material, materialstates, cellset, state.a, rve.grid, macroparamters, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
         
     end
 
@@ -598,9 +622,9 @@ function _assemble_volume!(rve::RVE, state::State)
 end
 
 
-function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS) where {MS,dim}
+function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, macroparamters, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS, EXTRA_PROLONGATION, SOLVE_FOR_FLUCT) where {MS,dim}
 
-    (; udofs, X, ae, fu, fλ, ke, ke_λ, diffresult_λ) = cache
+    (; udofs, X, ae, fu, fλ, ke, ke_λ) = cache
 
     assembler_u = start_assemble(matrices.Kuu, matrices.fuu, fillzero=false)
     assembler_λ = start_assemble()
@@ -624,7 +648,7 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
         #ke = 1/A◫ * DiffResults.jacobian(diffresult_u)
         
         integrate_fuu2!(ke, fu, cv_u, material, mstates, ae)
-        assemble!(assembler_u, udofs, ke, fu)
+        assemble!(assembler_u, udofs, 1/A◫ * ke, 1/A◫ * fu)
 
         #---
         #=for d in 1:dim
@@ -646,6 +670,16 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
                 integrate_fλθ_2!(ke_λ, fλ, cv_u, X, ae, d); 
                 assemble!(assembler_λ, [d], udofs, ke_λ * (1/I◫)) #matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
             end
+        end
+
+        if SOLVE_FOR_FLUCT
+            fill!(fu, 0.0)
+            x̄ = zero(Vec{dim})
+            uᴹ(x)  = prolongation(x, x̄, macroparamters, EXTRA_PROLONGATION)
+            ∇uᴹ(x) = Tensors.gradient(uᴹ, x)
+
+            integrate_rhs!(fu, cv_u, material, mstates, X, ∇uᴹ)
+            matrices.fext_u[udofs] .+= 1/A◫ * fu 
         end
 
         if PERFORM_CHECKS
@@ -695,9 +729,11 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
 
         assemble!(assembler_μ, μdofs, udofs, -ke_μ  * (1/A◫) ) #matrices.Kμu[μdofs, udofs] += -ke_μ  * (1/A◫) 
 
-        fill!(fμ, 0.0)
-        integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
-        matrices.fext_μ[μdofs] += fμ * (1/A◫)
+        if !rve.SOLVE_FOR_FLUCT
+            fill!(fμ, 0.0)
+            integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
+            matrices.fext_μ[μdofs] += fμ * (1/A◫)
+        end
     end
 
     @info "Gamma -"
@@ -721,9 +757,11 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         
         assemble!(assembler_μ, μdofs, udofs, ke_μ  * (1/A◫) ) #matrices.Kμu[μdofs, udofs] += ke_μ  * (1/A◫) 
 
-        fill!(fμ, 0.0)
-        integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
-        matrices.fext_μ[μdofs] += -fμ * (1/A◫)
+        if !rve.SOLVE_FOR_FLUCT
+            fill!(fμ, 0.0)
+            integrate_fμ_ext!(fμ, fv_u, ip_μ, X, macroscale.∇u, macroscale.∇w, macroscale.∇θ);
+            matrices.fext_μ[μdofs] += -fμ * (1/A◫)
+        end
     end
 
     matrices.Kμu = end_assemble(assembler_μ)
@@ -735,6 +773,11 @@ function solve_it!(rve::RVE, state::State)
     elseif rve.SOLVE_STYLE == SOLVE_SCHUR
         _solve_it_schur!(rve::RVE, state::State)
     end
+
+    if rve.SOLVE_FOR_FLUCT
+        state.a[1:rve.nudofs] .+= rve.matrices.uM
+    end
+
     #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
     #    _solve_it_strong_periodic(rve, state)
     #elseif rve.BC_TYPE == WEAK_PERIODIC
@@ -754,8 +797,8 @@ function _solve_it_schur!(rve::RVE, state::State)
     nλμdofs = nλdofs + nμdofs
 
     K = matrices.Kuu
+    fext_u = matrices.fext_u
     RHS = zeros(Float64, nudofs, 1 + nλdofs + nμdofs)
-    fext_u = zeros(Float64, nudofs)
     #Ferrite._condense_sparsity_pattern!(K, ch.acs)
 
     fμλ = vcat(matrices.fext_μ, matrices.fext_λ)
@@ -817,8 +860,6 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     (; dh, ch, matrices)   = rve
     (; nμdofs, nλdofs) = rve
 
-    fext_u = zeros(Float64, ndofs(ch.dh))
-
     @info "combining"
     #KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
     #          hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
@@ -828,7 +869,7 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
           matrices.Kμu spzeros(Float64, nμdofs, nμdofs) spzeros(Float64,nμdofs,nλdofs);
           matrices.Kλu spzeros(Float64, nλdofs, nμdofs) spzeros(Float64,nλdofs,nλdofs)]
 
-    ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
+    ff = vcat(matrices.fext_u, matrices.fext_μ, matrices.fext_λ)
     
     Ferrite._condense_sparsity_pattern!(KK, ch.acs)
 
@@ -874,132 +915,6 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     #@show ff[[68008, 68009, 68010]]
     #@show reac[[68008, 68009, 68010]]
 
-end
-
-function _solve_it_weak_periodic(rve::RVE, state::State)
-
-    (; dh, ch, matrices)   = rve
-    (; nμdofs, nλdofs) = rve
-
-    KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
-        hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
-        hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
-
-    ff = vcat(zeros(Float64, ndofs(dh)), matrices.fext_μ, matrices.fext_λ)
-        
-        
-    aa .= KK\ff
-
-    nλdofs = rve.nλdofs 
-    nudofs = ndofs(ch.dh)
-
-    K = matrices.Kuu
-    RHS = zeros(Float64, nudofs, 1 + nλdofs)
-    fext_u = zeros(Float64, nudofs)
-    #Ferrite._condense_sparsity_pattern!(K, ch.acs)
-
-    fλ = matrices.fext_λ
-    C = copy(matrices.Kλu)
-    Ct = copy(matrices.Kλu)'
-    b = zeros(Float64, ndofs(ch.dh)); 
-    b[ch.prescribed_dofs] .= ch.inhomogeneities
-
-    apply!(K, fext_u, ch)
-    condense_rhs!(Ct, ch) 
-    
-    RHS[:, 1] .= fext_u
-    RHS[:, (1:nλdofs) .+ 1] .= -Ct
-
-    @time LHS = K\RHS
-    ub = LHS[:,1]               # ub =  K\fext_u
-    Uλ = LHS[:,(1:nλdofs) .+ 1] # Uλ = -K\Ct 
-
-    ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
-
-    λ = (Ct'*Uλ)\(-C*b - Ct'*ub + fλ)
-
-    state.a[(1:nudofs)          ] .= ub + Uλ*λ
-    state.a[(1:nλdofs) .+ nudofs] .= λ
-
-    apply!(state.a, ch)
-    
-    #μdofs = (1:nμdofs) .+ ndofs(dh)
-    #λdofs = (1:nλdofs) .+ ndofs(dh) .+ nμdofs
-
-    #μ = a[μdofs]
-    #λ = a[λdofs]
-end
-
-
-function _solve_it_strong_periodic(rve::RVE, state::State)
-
-    (; dh, ch, matrices)   = rve
-    (; nudofs, nμdofs, nλdofs) = rve
-
-    #=
-    fext_u = zeros(Float64, ndofs(ch.dh))
-
-    K = vcat(hcat(matrices.Kuu, matrices.Kλu'),
-             hcat(matrices.Kλu, zeros(Float64, nλdofs, nλdofs)))
-    f = vcat(fext_u, matrices.fext_λ)
-    
-    Ferrite._condense_sparsity_pattern!(K, ch.acs)
-
-    @show size(matrices.Kλu)
-    apply!(K, f, ch)
-    state.a .= K\f
-    @show state.a[end-1:end]
-    apply!(state.a, ch)
-    @show state.a[end-1:end]=#
-    #state.a[end - 1:end] = [-0.1324798100769443, 4.184280901039025e-18]
-    #state.a[end - 1:end] = [-0.1324798100769443, 4.184280901039025e-18]
-    #-0.06743940990516334 -0.038461538461538464
-   # state.a[end - 4:end] = [0.0023190336868656783, -3.2790763838489505e-5, -0.0049601617569132225, -0.1528202442617568, -0.0011312339754665324]
-    
-   
-    nλdofs = rve.nλdofs 
-
-    K = matrices.Kuu
-    RHS = zeros(Float64, nudofs, 1 + nλdofs)
-    fext_u = zeros(Float64, nudofs)
-    #Ferrite._condense_sparsity_pattern!(K, ch.acs)
-
-    fλ = matrices.fext_λ
-    C = copy(matrices.Kλu)
-    Ct = copy(matrices.Kλu)'
-    b = zeros(Float64, ndofs(ch.dh)); 
-    b[ch.prescribed_dofs] .= ch.inhomogeneities
-#=
-    apply!(K, fext_u, ch)
-    condense_rhs!(Ct, ch) 
-    
-    RHS[:, 1] .= fext_u
-    RHS[:, (1:nλdofs) .+ 1] .= -Ct
-
-    @time LHS = K\RHS
-    ub = LHS[:,1]               # ub =  K\fext_u
-    Uλ = LHS[:,(1:nλdofs) .+ 1] # Uλ = -K\Ct 
-
-    ub[Ferrite.prescribed_dofs(ch)] .= 0.0 #apply_zero!(ub, ch)
-
-    λ = (Ct'*Uλ)\(-C*b - Ct'*ub + fλ)
-
-    state.a[(1:nudofs)          ] .= ub + Uλ*λ
-    state.a[(1:nλdofs) .+ nudofs] .= λ
-
-    apply!(state.a, ch)=#
-
-    
-    T, b = Ferrite.create_constraint_matrix(ch)
-    ûb = (T'*K*T)\(-T'*K*b)
-    Uλ = (T'*K*T)\(-T'*C')
-    λ = (C*T*Uλ)\(-C*b - C*T*ûb + fλ)
-    apply!(state.a, ch) 
-    
-    #@show norm(state.a)
-
-    @show λ
-    #error("sdf")
 end
 
 function condense_rhs!(f::AbstractVecOrMat, ch::ConstraintHandler)
@@ -1103,7 +1018,9 @@ function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_l
 
 end
 
-function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternode::Int) where dim
+function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternode::Int, EXTRA_PROLONGATION, SOLVE_FOR_FLUCT) where dim
+
+    x̄ = zero(Vec{dim})
 
     for (nodeid_s, nodeid_m) in nodepairs
         
@@ -1120,7 +1037,11 @@ function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedof
 
         z = xm[dim]
 
-        b = ∇u⋅x_jump - z*∇θ⋅x_jump + ∇w⋅x_jump * e₃
+        b = zero(Vec{dim})
+        if !SOLVE_FOR_FLUCT
+            #b = ∇u⋅x_jump - z*∇θ⋅x_jump + ∇w⋅x_jump * e₃
+            b = prolongation(xs, x̄, macroscale, EXTRA_PROLONGATION) - prolongation(xm, x̄, macroscale, EXTRA_PROLONGATION)
+        end
 
         dof_s = nodedofs[:,nodeid_s]
         dof_l = nodedofs[:,nodeid_m]
@@ -1178,6 +1099,24 @@ function extract_nodedofs(dh::DofHandler, field::Symbol)
     end
 
     return node_dofs
+end
+
+function evaluate_uᴹ!(uM::Vector{Float64}, rve::RVE{dim}, macroparameters::MacroParameters) where {dim}
+
+    x̄ = zero(Vec{dim})
+
+    chM = ConstraintHandler(rve.dh)
+    add!(chM, Ferrite.Dirichlet(:u, Set(1:getnnodes(rve.grid)), (x, t) -> prolongation(x, x̄, macroparameters, rve.EXTRA_PROLONGATION), 1:dim))
+    close!(chM)
+    update!(chM, 0.0)
+    apply!(uM, chM)
+
+    #(; dh)    = rve.dh
+    #(; udofs) = rve.cache
+
+    #for cellid in 1:getncells(dh)
+    #    celldofs!(udofs, dh, cellid)
+    #end
 end
 
 function faceset_to_nodeset(grid::Grid, set::Set{FaceIndex})

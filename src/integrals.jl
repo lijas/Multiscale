@@ -172,6 +172,28 @@ function integrate_fμu_2!(ke::Matrix{T}, f::Vector{T}, cv_u::FaceVectorValues, 
     
 end
 
+function integrate_rhs!(f::Vector{Float64}, cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, X::Vector{Vec{dim,T}}, ∇uᴹ::Function) where {dim,T}
+    for iqp in 1:getnquadpoints(cv_u)
+        
+        dV = getdetJdV(cv_u, iqp)
+        
+        x = spatial_coordinate(cv_u, iqp, X)
+        εᴹ = symmetric(∇uᴹ(x))
+        
+        if dim == 2
+            σ, C, state[iqp] = material_response(PlaneStrain(), material, εᴹ, state[iqp])
+        else
+            σ, C, state[iqp] = material_response(material, εᴹ, state[iqp])
+        end
+        
+        for i in 1:getnbasefunctions(cv_u)
+            ∇Ni = shape_gradient(cv_u, iqp, i)
+            f[i] += (-∇Ni ⊡ σ ) * dV
+        end 
+    end
+
+end
+
 function integrate_fμ_ext!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite.Interpolation, X::Vector{Vec{dim,Float64}}, ∇u, ∇w, ∇θ) where {dim,T}
 
     e = basevec.(Vec{dim}, ntuple(i->i, dim))
