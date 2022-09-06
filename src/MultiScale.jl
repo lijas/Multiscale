@@ -605,15 +605,20 @@ function _assemble_volume!(rve::RVE, macroparamters::MacroParameters, state::Sta
     fill!(rve.matrices.check_x, 0.0)
     fill!(rve.matrices.check_z, 0.0)
 
+
+    assembler_u = start_assemble(rve.matrices.Kuu, rve.matrices.fuu, fillzero=false)
+    assembler_λ = start_assemble()
+
     for (partid, part) in enumerate(rve.parts)
         material = part.material
         cellset = part.cellset
         materialstates = state.partstates[partid].materialstates
 
-        _assemble!(material, materialstates, cellset, state.a, rve.grid, macroparamters, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
-        
+        _assemble!(material, assembler_u, assembler_λ, materialstates, cellset, state.a, rve.grid, macroparamters, rve.dh, rve.cv_u, rve.cache, rve.matrices, rve.A◫, rve.Ω◫, rve.I◫, rve.VOLUME_CONSTRAINT, rve.PERFORM_CHECKS, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
     end
 
+    rve.matrices.Kλu = sparse(assembler_λ.I, assembler_λ.J, assembler_λ.V, rve.nλdofs, rve.nudofs)#end_assemble(assembler_λ)
+    
     if rve.PERFORM_CHECKS
         @info "Check value ∫ z dΩ: $(rve.matrices.check_z[1])"
         @info "Check value ∫ xₚ - ̄x dΩ: $(rve.matrices.check_x[1])"
@@ -622,12 +627,9 @@ function _assemble_volume!(rve::RVE, macroparamters::MacroParameters, state::Sta
 end
 
 
-function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, macroparamters, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS, EXTRA_PROLONGATION, SOLVE_FOR_FLUCT) where {MS,dim}
+function _assemble!(material::AbstractMaterial, assembler_u, assembler_λ, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, macroparamters, dh, cv_u, cache, matrices, A◫, Ω◫, I◫, VOLUME_CONSTRAINT, PERFORM_CHECKS, EXTRA_PROLONGATION, SOLVE_FOR_FLUCT) where {MS,dim}
 
     (; udofs, X, ae, fu, fλ, ke, ke_λ) = cache
-
-    assembler_u = start_assemble(matrices.Kuu, matrices.fuu, fillzero=false)
-    assembler_λ = start_assemble()
 
     #a = zeros(Float64, ndofs(dh)) # TODO: where to put this?
     #materialstates = [[initial_material_state(material) for i in 1:getnquadpoints(cv_u)] for _ in 1:getncells(grid)]
@@ -686,8 +688,6 @@ function _assemble!(material::AbstractMaterial, materialstates::Vector{Vector{MS
             integrate_checks(matrices.check_z, matrices.check_x, cv_u, X)
         end
     end
-
-    matrices.Kλu = end_assemble(assembler_λ)
 
 end
 
@@ -764,7 +764,7 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
         end
     end
 
-    matrices.Kμu = end_assemble(assembler_μ)
+    matrices.Kμu = sparse(assembler_μ.I, assembler_μ.J, assembler_μ.V, rve.nμdofs, rve.nudofs)#end_assemble(assembler_μ)
 end
 
 function solve_it!(rve::RVE, state::State)
