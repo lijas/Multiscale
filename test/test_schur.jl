@@ -41,7 +41,7 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
     state = State(rve)
 
     MultiScale._apply_macroscale!(rve, macroscale, state)
-    MultiScale._assemble_volume!(rve, state)
+    MultiScale._assemble_volume!(rve, macroscale, state)
     
     state2 = State(rve)
     MultiScale._solve_it_full!(rve, state2)
