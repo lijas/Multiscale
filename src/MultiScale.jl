@@ -607,7 +607,7 @@ function _assemble_volume!(rve::RVE, macroparamters::MacroParameters, state::Sta
 
 
     assembler_u = start_assemble(rve.matrices.Kuu, rve.matrices.fuu, fillzero=false)
-    assembler_λ = start_assemble()
+    assembler_λ = start_assemble(rve.nudofs * rve.nλdofs)
 
     for (partid, part) in enumerate(rve.parts)
         material = part.material
@@ -670,7 +670,7 @@ function _assemble!(material::AbstractMaterial, assembler_u, assembler_λ, mater
 
                 # Analytical
                 integrate_fλθ_2!(ke_λ, fλ, cv_u, X, ae, d); 
-                assemble!(assembler_λ, [d], udofs, ke_λ * (1/I◫)) #matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
+                Ferrite.assemble!(assembler_λ, Vec{1,Int}((d,)), udofs, ke_λ * (1/I◫)) #matrices.Kλu[[d], udofs] += ke_λ * (1/I◫)
             end
         end
 
@@ -699,7 +699,7 @@ function assemble_face!(rve::RVE{dim}, macroscale::MacroParameters, a::Vector{Fl
     (; diffresult_μ) = rve.cache
     (; A◫) = rve
 
-    assembler_μ = start_assemble()
+    assembler_μ = start_assemble(rve.nudofs * rve.nμdofs)
 
     μdofs = collect(1:rve.nμdofs)
 
