@@ -4,7 +4,7 @@ using Ferrite
 using Tensors
 using MaterialModels
 #using TimerOutputs
-using Plots; plotly()
+#using Plots; plotly()
 
 include("example_utils.jl")
 
@@ -13,7 +13,7 @@ function run_isotropic()
     dim = 3
     h = 5.0
 
-    material = LinearElastic(E = 210.0, ν = 0.0 )
+    material = LinearElastic(E = 210.0, ν = 0.3 )
 
     macroscale = MultiScale.MacroParameters{2}(
         ∇u = Tensor{2,2}((0.00, 0.00, 0.0, 0.00)), 
@@ -39,6 +39,7 @@ function run_isotropic()
     N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
 
     #Plot results 
+    #=
     fig = [plot(reuse=false) for _ in 1:3] 
     for d1 in 1:dim-1
         _Vs = getindex.(Vs, d1)
@@ -67,7 +68,7 @@ function run_isotropic()
     display(fig[1])
     display(fig[2])
     display(fig[3])
-
+    =#
 
 end
 
@@ -104,8 +105,11 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
             MultiScale.RVESubPart(
                 material = material,
                 cellset = 1:getncells(grid) |> collect
-            )],
-        BC_TYPE = MultiScale.STRONG_PERIODIC()
+            )
+        ],
+        BC_TYPE = MultiScale.STRONG_PERIODIC(),
+        EVAL_STRESSES = true,
+        SOLVE_FOR_FLUCT = true,
     )
 
     state = State(rve)
@@ -114,7 +118,8 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     N,V,M = MultiScale.calculate_response(rve, state)
 
     vtk_grid("rve_newcode_$(round(Int,L◫))", rve.dh) do vtk
-        vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)])
+        vtk_point_data(vtk, rve.dh, state.u)
+        vtk_point_data(vtk, rve.dh, state.σ_projected)
         vtk_cellset(vtk, grid)
     end
 

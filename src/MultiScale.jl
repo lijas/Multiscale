@@ -24,7 +24,7 @@ function IterativeSolvers.Identity(a)
     return IterativeSolvers.Identity()
 end
 
-export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_WITH_PAIRS, DIRICHLET, RELAXED_DIRICHLET, STRONG_PERIODIC2
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -213,6 +213,7 @@ struct WEAK_PERIODIC <: BCType end
 struct STRONG_PERIODIC  <: BCType end
 struct RELAXED_DIRICHLET  <: BCType end
 struct DIRICHLET <: BCType end
+struct STRONG_PERIODIC2 <: BCType end
 struct STRONG_PERIODIC_WITH_PAIRS  <: BCType 
     pairs::Vector{Pair{Int,Int}}
 end
@@ -255,6 +256,7 @@ struct RVE{dim, CACHE<:RVECache, LS, PR}
     EXTRA_PROLONGATION::Bool
     PERFORM_CHECKS::Bool
     SOLVE_FOR_FLUCT::Bool
+    EVAL_STRESSES::Bool
 end
 
 function rvesize(grid::Grid{dim}; dir=d) where dim
@@ -290,11 +292,12 @@ function RVE(;
     BC_TYPE::BCType, 
     SOLVE_STYLE::SolveStyle = SOLVE_FULL,
     ip_u::Interpolation = Ferrite.default_interpolation(getcelltype(grid)),
-    VOLUME_CONSTRAINT = true,
+    VOLUME_CONSTRAINT  = true,
     EXTRA_PROLONGATION = false,
-    PERFORM_CHECKS = false,
-    SOLVE_FOR_FLUCT = false,
-    LINEAR_SOLVER = nothing,
+    PERFORM_CHECKS     = false,
+    SOLVE_FOR_FLUCT    = false,
+    EVAL_STRESSES      = true,
+    LINEAR_SOLVER      = nothing,
     PRECON  = IterativeSolvers.Identity,) where dim
 
     #Get size of rve
@@ -344,7 +347,7 @@ function RVE(;
     elseif BC_TYPE == DIRICHLET()
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
-    elseif BC_TYPE == STRONG_PERIODIC()
+    elseif BC_TYPE == STRONG_PERIODIC() || BC_TYPE == STRONG_PERIODIC2()
         @assert( haskey(grid.nodesets, "right") )
         @assert( haskey(grid.nodesets, "left") )
         if dim == 3
@@ -378,16 +381,21 @@ function RVE(;
     I◫ = A◫*h^3/12
 
     #TODO: Automatically build linear solver and precon
-    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, EXTRA_PROLONGATION, PERFORM_CHECKS, SOLVE_FOR_FLUCT)
+    return RVE(grid, dh, ch, parts, cache, matrices, cv_u, fv_u, ip_μ, side_length, Ω◫, A◫, I◫, nudofs, nμdofs, nλdofs, BC_TYPE, SOLVE_STYLE, LINEAR_SOLVER, PRECON, VOLUME_CONSTRAINT, EXTRA_PROLONGATION, PERFORM_CHECKS, SOLVE_FOR_FLUCT, EVAL_STRESSES)
 end
 
 
 struct State
-    a::Vector{Float64}
+    a::Vector{Float64}   #Termporary solution vector
+    uM::Vector{Float64}
+    uS::Vector{Float64}
+    u::Vector{Float64}   #u = uM + uS
     partstates::Vector{RVESubPartState}
+    σ_qp::Vector{Vector{<:SymmetricTensor{2}}} #Stresses in each Gausspoint
+    σ_projected::Vector{<:SymmetricTensor{2}}
 end
 
-function State(rve::RVE)
+function State(rve::RVE{dim}) where dim
     
     partstates = RVESubPartState[]
     for part in rve.parts
@@ -400,9 +408,11 @@ function State(rve::RVE)
         push!(partstates, RVESubPartState{MS}(materialstates))
     end
 
-    _ndofs = ndofs(rve.dh) + rve.nμdofs + rve.nλdofs
+    _ndofs = rve.nudofs + rve.nμdofs + rve.nλdofs
 
-    return State(zeros(Float64, _ndofs), partstates)
+    σ_projected =  zeros(SymmetricTensor{2,dim}, getnnodes(rve.grid))
+    σ_qp        = [zeros(SymmetricTensor{2,dim}, getnquadpoints(rve.cv_u)) for i in 1:getncells(rve.grid)]
+    return State(zeros(Float64, _ndofs), zeros(Float64, rve.nudofs), zeros(Float64, rve.nudofs), zeros(Float64, rve.nudofs), partstates, σ_qp, σ_projected )
 end
 
 function State(rve::RVE, partstates::Vector{RVESubPartState}) 
@@ -412,19 +422,26 @@ function State(rve::RVE, partstates::Vector{RVESubPartState})
 end
 
 function solve_rve(rve::RVE{dim}, macroscale::MacroParameters, state::State) where dim
+
+    @info "Evaluating uM"
+    evaluate_uᴹ!(state.uM, rve, macroscale)
+    
+    state.a[1:rve.nudofs] .= state.uM #Initial guess does not matter
+    
     @info "applying macroscale"
     _apply_macroscale!(rve, macroscale, state)
 
     @info "assembling volume"
     @time _assemble_volume!(rve, macroscale, state)
 
-    @info "Evaluating uM"
-    evaluate_uᴹ!(rve.matrices.uM, rve, macroscale)
-    
     @info "Solving it"
     time = @elapsed(solve_it!(rve, state))
 
-
+    @info "Eval stresses"
+    if rve.EVAL_STRESSES
+        _eval_stresses!(rve, state)     #Calculates stresses in each quadrature point
+        project_stresses!(rve, state)   #
+    end
     return time
 end
 
@@ -496,20 +513,20 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
     e₃ = basevec(Vec{dim}, dim)
 
     uᴹ = prolongation
-    uˢ = rve.SOLVE_FOR_FLUCT
+    solve_uˢ = rve.SOLVE_FOR_FLUCT
 
     reset_constrainthandler!(rve.ch)
 
     if rve.BC_TYPE == WEAK_PERIODIC()
         @info "Assemble face"
         @info "Integrating face constraints"
-        assemble_face!(rve, macroscale, state.a)
+        assemble_face!(rve, macroscale, solve_uˢ ? state.uS : state.u)
 
         @show [macroscale.u..., macroscale.w]
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> uˢ ? zero(Vec{dim}) : [macroscale.u..., macroscale.w],
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : [macroscale.u..., macroscale.w],
             1:dim
         )
         add!(rve.ch, dbc)
@@ -526,13 +543,13 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) -> uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
             1:dim
         )
         add!(rve.ch, dbc)
 
     elseif rve.BC_TYPE == RELAXED_DIRICHLET()
-        assemble_face!(rve, macroscale, state.a)
+        assemble_face!(rve, macroscale, solve_uˢ ? state.uS : state.u)
         x̄ = zero(Vec{dim})
 
         facesnames = ["right", "left"]
@@ -544,7 +561,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) -> uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
+            (x, t) -> solve_uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
             1:(dim-1)
         )
         add!(rve.ch, dbc)
@@ -553,15 +570,14 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
+            (x, t) -> solve_uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
             [dim]
         )
         add!(rve.ch, dbc)
 
     elseif rve.BC_TYPE == STRONG_PERIODIC()
         nodedofs = extract_nodedofs(rve.dh, :u)
-        Γ_rightnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁺" ))
-        Γ_leftnodes = faceset_to_nodeset(rve.grid, getfaceset(rve.grid, "Γ⁻") )
+
         facepairs = ["right"=>"left"]
         if dim ==3
             push!(facepairs, "back"=>"front")
@@ -571,6 +587,20 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
         @info "Adding linear constraints"
         add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
+    elseif rve.BC_TYPE == STRONG_PERIODIC2()
+        error("Use when fredrik updates PCB")
+        facepairs = ["right"=>"left"]
+        if dim ==3
+            push!(facepairs, "back"=>"front")
+        end
+
+        periodic = PeriodicDirichlet(
+            :u,
+            facepairs,
+            collect(1:dim)
+        )
+        add!(rve.ch, periodic)
+
     elseif rve.BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
         error("This BC is unused and not tested... Please check implementation and update code. ")
         masternode = getnodeset(rve.grid, "cornerset") |> first
@@ -582,7 +612,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     if rve.VOLUME_CONSTRAINT
         for d in 1:dim-1
-            rve.matrices.fext_λ[d] +=  uˢ ? 0.0 : -macroscale.θ[d]
+            rve.matrices.fext_λ[d] +=  solve_uˢ ? 0.0 : -macroscale.θ[d]
         end
     end
 
@@ -775,16 +805,13 @@ function solve_it!(rve::RVE, state::State)
     end
 
     if rve.SOLVE_FOR_FLUCT
-        state.a[1:rve.nudofs] .+= rve.matrices.uM
+        state.uS[1:rve.nudofs] .= state.a[1:rve.nudofs] 
+        state.u  .= state.uS .+ state.uM
+    else
+        state.u[1:rve.nudofs] .= state.a[1:rve.nudofs]
+        state.uS .= state.u .- state.uM
     end
-
-    #if rve.BC_TYPE == STRONG_PERIODIC || rve.BC_TYPE == DIRICHLET
-    #    _solve_it_strong_periodic(rve, state)
-    #elseif rve.BC_TYPE == WEAK_PERIODIC
-    #    _solve_it_weak_periodic(rve, state)
-    #else
-    #    error("WRONG BC_TYPE")
-    #end
+    
 end
 
 function _solve_it_schur!(rve::RVE, state::State)
@@ -914,6 +941,35 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     #@show state.a[[68008, 68009, 68010]]
     #@show ff[[68008, 68009, 68010]]
     #@show reac[[68008, 68009, 68010]]
+
+end
+
+function _eval_stresses!(rve::RVE, state::State)
+
+    for (partid, part) in enumerate(rve.parts)
+        material = part.material
+        cellset = part.cellset
+        materialstates = state.partstates[partid].materialstates
+        cellstresses   = state.σ_qp
+
+        _eval_stresses!(material, cellstresses, materialstates, cellset, state.u, rve.grid, rve.dh, rve.cv_u, rve.cache)
+    end
+
+end
+
+function _eval_stresses!(material::AbstractMaterial, cellstresses::Vector{Vector{<:SymmetricTensor{2,dim}}}, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, grid::Grid{dim}, dh, cv_u, cache) where {MS,dim}
+
+    (; udofs, X, ae) = cache
+
+    for (localid, cellid) in enumerate(cellset)
+        celldofs!(udofs, dh, cellid)
+        getcoordinates!(X, grid, cellid)
+        disassemble!(ae, a, udofs)
+
+        mstates = materialstates[localid]
+        stresses = cellstresses[cellid]
+        eval_stresses!(cv_u, material, stresses, mstates, ae)
+    end
 
 end
 

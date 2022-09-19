@@ -11,7 +11,7 @@ function calculate_response(rve::RVE{dim}, state::State) where dim
         cellset = part.cellset
         matstates = state.partstates[partid].materialstates
 
-        _calculate_response(N, V, M, rve, material, matstates, cellset, state.a)
+        _calculate_response(N, V, M, rve, material, matstates, cellset, state.u)
     end
 
     return N[], V[], M[]
@@ -79,4 +79,9 @@ function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Ve
     end    
 
     return N, V, M
+end
+
+function project_stresses!(rve::RVE, state::State)
+    projector = L2Projector(rve.cv_u.func_interp, rve.grid);
+    state.σ_projected .= project(projector, state.σ_qp, rve.cv_u.qr; project_to_nodes=true);
 end

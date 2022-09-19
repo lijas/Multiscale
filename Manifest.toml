@@ -274,6 +274,11 @@ git-tree-sha1 = "3f3a2501fa7236e9b911e0f7a588c657e822bb6d"
 uuid = "5ae413db-bbd1-5e63-b57d-d24a61df00f5"
 version = "2.2.3+0"
 
+[[deps.EnumX]]
+git-tree-sha1 = "1d2621e1a6246c5cf1116be0055686f305210b80"
+uuid = "4e289a0a-7415-4d19-859d-a7e5c4648b56"
+version = "1.0.2"
+
 [[deps.Expat_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "bad72f730e9e91c08d9427d5e8db95478a3c323d"
@@ -304,12 +309,10 @@ uuid = "29a986be-02c6-4525-aec4-84b980013641"
 version = "1.1.0"
 
 [[deps.Ferrite]]
-deps = ["LinearAlgebra", "NearestNeighbors", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
-git-tree-sha1 = "5a57d372bd2e28a711657adf94d9a1c81262aca3"
-repo-rev = "eb_condense_alt1"
-repo-url = "https://github.com/Ferrite-FEM/Ferrite.jl.git"
+deps = ["EnumX", "LinearAlgebra", "NearestNeighbors", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
+path = "/home/elias/.julia/dev/Ferrite"
 uuid = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
-version = "0.3.4"
+version = "0.3.7"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]

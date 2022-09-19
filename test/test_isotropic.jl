@@ -70,7 +70,7 @@ end
 
     Ls = [5.0, 10.0]#, 30.0]#, 4.0, 7.0]
     solvestyles = [MultiScale.SOLVE_FULL, MultiScale.SOLVE_FULL, MultiScale.SOLVE_SCHUR]
-    bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), STRONG_PERIODIC()]#, DIRICHLET(),]
+    bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), MultiScale.STRONG_PERIODIC()]#, DIRICHLET(),]
     for (solvestyle, bctype) in zip(solvestyles, bctypes)
         for L in Ls
             println("Length: $L")

@@ -49,6 +49,22 @@ function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVect
 
 end
 
+function eval_stresses!(cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, stresses::Vector{<:SymmetricTensor{2,T}}, state::Vector{<:MaterialModels.AbstractMaterialState}, ae::Vector{T}) where {dim,T}
+    for iqp in 1:getnquadpoints(cv_u)
+                
+        ∇u = function_gradient(cv_u, iqp, ae)
+        ε = symmetric(∇u)
+        
+        if dim == 2
+            σ, C, _ = material_response(PlaneStrain(), material, ε, state[iqp])
+        else
+            σ, C, _ = material_response(material, ε, state[iqp])
+        end
+        
+        stresses[iqp] = σ
+    end
+
+end
 
 function integrate_fλu!(result::DiffResult, y::Vector{T}, cv_u::CellVectorValues, ae::Vector{Float64}, dir::Int) where T
     f!(y, ae) = fλu!(y, cv_u, ae, dir)
