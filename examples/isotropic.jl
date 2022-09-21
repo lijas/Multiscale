@@ -4,21 +4,21 @@ using Ferrite
 using Tensors
 using MaterialModels
 #using TimerOutputs
-using Plots; plotly()
+#using Plots; plotly()
 
 include("example_utils.jl")
 
 function run_isotropic()
 
     dim = 3
-    h = 5.0
+    h = 2.0
 
-    material = LinearElastic(E = 210.0, ν = 0.0 )
+    material = LinearElastic(E = 210.0, ν = 0.3 )
 
     macroscale = MultiScale.MacroParameters{2}(
         ∇u = Tensor{2,2}((0.00, 0.00, 0.0, 0.00)), 
         ∇w = Vec{2}((0.0, 0.00)), 
-        ∇θ = Tensor{2,2}((0.01, 0.00, 0.00, 0.00)), 
+        ∇θ = Tensor{2,2}((0.1, 0.00, 0.00, 0.1)), 
         w = 0.0, 
         θ = Vec{2}((0.0,0.0))
     )
@@ -27,7 +27,7 @@ function run_isotropic()
     Vs = []
     Ms = []
     
-    Ls = [1.0, 5.0, 10., 20.0]#, 30.0]#, 4.0, 7.0]
+    Ls = [2.0]#, 10., 20.0]#, 30.0]#, 4.0, 7.0]
     for L in Ls
         println("Length: $L")
         N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material)
@@ -36,8 +36,10 @@ function run_isotropic()
         push!(Vs, V)
     end
 
-    N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
-
+    @show N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
+    @show Ns, Vs, Ms
+    nothing
+    #=
     #Plot results 
     fig = [plot(reuse=false) for _ in 1:3] 
     for d1 in 1:dim-1
@@ -66,7 +68,7 @@ function run_isotropic()
     end
     display(fig[1])
     display(fig[2])
-    display(fig[3])
+    display(fig[3])=#
 
 
 end
@@ -77,7 +79,6 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     #h = 2.0
     
     elsize = 0.5
-
     nelx = round(Int, L◫/elsize)
     nelz = round(Int, h/elsize)
     nels =  (nelx, nelx, nelz) 
@@ -105,7 +106,11 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.STRONG_PERIODIC()
+        BC_TYPE = MultiScale.STRONG_PERIODIC(),
+        SOLVE_STYLE = MultiScale.SOLVE_SCHUR,
+        SOLVE_FOR_FLUCT = false,
+        EXTRA_PROLONGATION = false,
+
     )
 
     state = State(rve)
@@ -113,7 +118,7 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
 
     N,V,M = MultiScale.calculate_response(rve, state)
 
-    vtk_grid("rve_newcode_$(round(Int,L◫))", rve.dh) do vtk
+    vtk_grid("rve_isotropic_$(round(Int,L◫))", rve.dh) do vtk
         vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)])
         vtk_cellset(vtk, grid)
     end

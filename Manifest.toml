@@ -5,9 +5,9 @@ manifest_format = "2.0"
 
 [[deps.AMD]]
 deps = ["Libdl", "LinearAlgebra", "SparseArrays", "Test"]
-git-tree-sha1 = "fc66ffc5cff568936649445f58a55b81eaf9592c"
+git-tree-sha1 = "00163dc02b882ca5ec032400b919e5f5011dbd31"
 uuid = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"
-version = "0.4.0"
+version = "0.5.0"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra"]
@@ -274,6 +274,11 @@ git-tree-sha1 = "3f3a2501fa7236e9b911e0f7a588c657e822bb6d"
 uuid = "5ae413db-bbd1-5e63-b57d-d24a61df00f5"
 version = "2.2.3+0"
 
+[[deps.EnumX]]
+git-tree-sha1 = "e5333cd1e1c713ee21d07b6ed8b0d8853fabe650"
+uuid = "4e289a0a-7415-4d19-859d-a7e5c4648b56"
+version = "1.0.3"
+
 [[deps.Expat_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "bad72f730e9e91c08d9427d5e8db95478a3c323d"
@@ -304,12 +309,10 @@ uuid = "29a986be-02c6-4525-aec4-84b980013641"
 version = "1.1.0"
 
 [[deps.Ferrite]]
-deps = ["LinearAlgebra", "NearestNeighbors", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
-git-tree-sha1 = "5a57d372bd2e28a711657adf94d9a1c81262aca3"
-repo-rev = "eb_condense_alt1"
-repo-url = "https://github.com/Ferrite-FEM/Ferrite.jl.git"
+deps = ["EnumX", "LinearAlgebra", "NearestNeighbors", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
+path = "/home/elias/.julia/dev/Ferrite"
 uuid = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
-version = "0.3.4"
+version = "0.3.7"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
@@ -673,9 +676,9 @@ version = "0.9.0"
 
 [[deps.LimitedLDLFactorizations]]
 deps = ["AMD", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "e18087f9a63bbd1bceb07b1b25cf2caf80b54af3"
+git-tree-sha1 = "66d411e9697efa68945d6aa78c65509523a227d9"
 uuid = "f5a24dde-3ab7-510b-b81b-6a72c6098d3b"
-version = "0.4.1"
+version = "0.4.2"
 
 [[deps.LineSearches]]
 deps = ["LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "Printf"]
@@ -916,9 +919,9 @@ version = "0.1.7"
 
 [[deps.Preconditioners]]
 deps = ["AlgebraicMultigrid", "LimitedLDLFactorizations", "LinearAlgebra", "SparseArrays"]
-path = "/home/elias/.julia/dev/Preconditioners"
+git-tree-sha1 = "aa2361f7ca0daf99ea38444ef52e6c989047751b"
 uuid = "af69fa37-3177-5a40-98ee-561f696e4fcd"
-version = "0.5.0"
+version = "0.5.2"
 
 [[deps.Preferences]]
 deps = ["TOML"]

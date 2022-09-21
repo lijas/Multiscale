@@ -211,6 +211,7 @@ end
 abstract type BCType end
 struct WEAK_PERIODIC <: BCType end
 struct STRONG_PERIODIC  <: BCType end
+struct STRONG_PERIODIC_FERRITE  <: BCType end
 struct RELAXED_DIRICHLET  <: BCType end
 struct DIRICHLET <: BCType end
 struct STRONG_PERIODIC_WITH_PAIRS  <: BCType 
@@ -344,7 +345,7 @@ function RVE(;
     elseif BC_TYPE == DIRICHLET()
         @assert( haskey(grid.facesets, "Γ⁺") )
         @assert( haskey(grid.facesets, "Γ⁻") )
-    elseif BC_TYPE == STRONG_PERIODIC()
+    elseif BC_TYPE == STRONG_PERIODIC() || BC_TYPE == STRONG_PERIODIC_FERRITE()
         @assert( haskey(grid.nodesets, "right") )
         @assert( haskey(grid.nodesets, "left") )
         if dim == 3
@@ -494,9 +495,10 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
     ∇w = increase_dim(macroscale.∇w)
 
     e₃ = basevec(Vec{dim}, dim)
+    x̄ = zero(Vec{dim})
 
     uᴹ = prolongation
-    uˢ = rve.SOLVE_FOR_FLUCT
+    solve_uˢ = rve.SOLVE_FOR_FLUCT
 
     reset_constrainthandler!(rve.ch)
 
@@ -509,13 +511,12 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> uˢ ? zero(Vec{dim}) : [macroscale.u..., macroscale.w],
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : [macroscale.u..., macroscale.w],
             1:dim
         )
         add!(rve.ch, dbc)
 
     elseif rve.BC_TYPE == DIRICHLET()
-        x̄ = zero(Vec{dim})
 
         facesnames = ["right", "left"]
         if dim ==3
@@ -526,14 +527,13 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) -> uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
             1:dim
         )
         add!(rve.ch, dbc)
 
     elseif rve.BC_TYPE == RELAXED_DIRICHLET()
         assemble_face!(rve, macroscale, state.a)
-        x̄ = zero(Vec{dim})
 
         facesnames = ["right", "left"]
         if dim ==3
@@ -544,7 +544,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             union(getfaceset.(Ref(rve.grid), facesnames)...),
-            (x, t) -> uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
+            (x, t) -> solve_uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
             1:(dim-1)
         )
         add!(rve.ch, dbc)
@@ -553,7 +553,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         dbc = Ferrite.Dirichlet(
             :u,
             getnodeset(rve.grid, "cornerset"),
-            (x, t) -> uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
+            (x, t) -> solve_uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
             [dim]
         )
         add!(rve.ch, dbc)
@@ -568,9 +568,46 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         end
         nodepairs, masternodes = search_nodepairs(rve.grid, facepairs, rve.L◫)
         masternode = getnodeset(rve.grid, "cornerset") |> first
-
+        @show masternode, masternodes
+        masternode = masternodes[4]
+        
         @info "Adding linear constraints"
         add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)
+        @show (rve.ch.acs)
+
+        @show ac = rve.ch.acs[18]
+        @show findfirst(i-> ac.constrained_dof in i, eachcol(nodedofs))
+        @show findfirst(i-> ac.entries[1][1] in i, eachcol(nodedofs))
+        asdf
+
+    elseif rve.BC_TYPE == STRONG_PERIODIC_FERRITE()
+        nodedofs = extract_nodedofs(rve.dh, :u)
+        facepairs = ["right" => "left", ]
+        if dim ==3
+            push!(facepairs, "back" => "front")
+        end
+        @info "Adding Periodic constraints (Ferrite)"
+        pbc = Ferrite.PeriodicDirichlet(
+            :u,
+            facepairs,
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            collect(1:(dim))
+        )
+        add!(rve.ch, pbc)
+    
+
+        #@info "Locking corner node"
+        #dbc = Ferrite.Dirichlet(
+        #    :u,
+        #    getnodeset(rve.grid, "cornerset"),
+        #    (x, t) -> solve_uˢ ? 0.0 : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[dim],
+        #    [dim]
+        #)
+        #add!(rve.ch, dbc)
+        @show ac = rve.ch.acs[8]
+        @show findfirst(i-> ac.constrained_dof in i, eachcol(nodedofs))
+        @show findfirst(i-> ac.entries[1][1] in i, eachcol(nodedofs))
+        error("sdf")
     elseif rve.BC_TYPE isa STRONG_PERIODIC_WITH_PAIRS
         error("This BC is unused and not tested... Please check implementation and update code. ")
         masternode = getnodeset(rve.grid, "cornerset") |> first
@@ -582,7 +619,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
 
     if rve.VOLUME_CONSTRAINT
         for d in 1:dim-1
-            rve.matrices.fext_λ[d] +=  uˢ ? 0.0 : -macroscale.θ[d]
+            rve.matrices.fext_λ[d] +=  solve_uˢ ? 0.0 : -macroscale.θ[d]
         end
     end
 
