@@ -3,7 +3,8 @@ module MultiScale
 
 using MaterialModels
 using Ferrite
-using FerriteGmsh
+import FerriteGmsh
+import Gmsh: gmsh
 using Tensors
 using ForwardDiff
 using DiffResults: DiffResult
