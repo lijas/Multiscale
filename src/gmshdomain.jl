@@ -148,7 +148,7 @@ function get_back_face(domain::AABB{3}, pad=domain.lengths[1]/100)
     gmsh.model.getEntitiesInBoundingBox(x, y, z, x2, y2, z2, 2)
 end
 
-function match_faces!(domain::AABB{2}) 
+function match_faces!(domain::AABB) 
     eps = domain.lengths[1]/100
 
     lx = domain.lengths[1]
@@ -166,8 +166,6 @@ function match_faces!(domain::AABB{2})
 
     gmsh.model.occ.synchronize()
     
-    append!(rightfacetags, mainboxdimtags)
-    
     objecttags = union(mainboxdimtags, leftfacetags, rightfacetags)
     tooltags = union(copyleftface, copyrightface)
 
@@ -177,8 +175,6 @@ function match_faces!(domain::AABB{2})
 end
 
 function get_new_tag(oldtag, alltags, map)
-
-    
 
 end
 
@@ -197,7 +193,7 @@ function generate_gmsh(sd::SampleDomain{dim}, meshsize::Float64) where dim
     #@show sd.domain
     #@show sd.inclusions
 
-    @show mainbox
+    @show mainbox  
     holes = []
     holetags = []
     for sphere in sd.inclusions
@@ -250,17 +246,19 @@ function generate_gmsh(sd::SampleDomain{dim}, meshsize::Float64) where dim
     #gmsh.fltk.run()
 
     #getindex.(leftfacetag,2)
-    #for ltag in leftfacetags
-        #for rtag in rightfacetag
-    try
-        translation = [1, 0, 0, -lx, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-        gmsh.model.mesh.setPeriodic(dim-1, getindex.(leftfacetags,2), getindex.(rightfacetags,2), translation)
-    catch e
-        throw(e)
+    translation = [1, 0, 0, -lx, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    for ltag in leftfacetags
+        for rtag in rightfacetags
+            try
+                gmsh.model.mesh.setPeriodic(dim-1, [ltag[1]], [rtag[1]], translation)
+            catch e
+                println("ltag $(ltag) not working for rtag $(rtag)")
+                continue
+            end
+        end
     end
 
-
-    if dim == 3
+    if dim == 4
         frontfacetag = get_front_face(sd.domain, eps)
         backfacetag = get_back_face(sd.domain, eps)
         translation = [1, 0, 0, 0, 0, 1, 0, -ly, 0, 0, 1, 0, 0, 0, 0, 1]
