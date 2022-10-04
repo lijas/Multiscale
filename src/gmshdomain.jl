@@ -250,7 +250,7 @@ function generate_gmsh(sd::SampleDomain{dim}, meshsize::Float64) where dim
     for ltag in leftfacetags
         for rtag in rightfacetags
             try
-                gmsh.model.mesh.setPeriodic(dim-1, [ltag[1]], [rtag[1]], translation)
+                gmsh.model.mesh.setPeriodic(dim-1, [ltag[2]], [rtag[2]], translation)
             catch e
                 println("ltag $(ltag) not working for rtag $(rtag)")
                 continue
@@ -295,10 +295,10 @@ function generate_gmsh(sd::SampleDomain{dim}, meshsize::Float64) where dim
     gmsh.model.occ.synchronize()
     gmsh.model.mesh.generate(dim)
 
-    gmsh.write("domainmesh.msh")
+    #gmsh.write("domainmesh.msh")
     #grid = saved_file_to_grid("domainmesh.msh")
 
-    grid = getgrid()
+    grid = getgrid()#FerriteGmsh.togrid()#getgrid()
 
     gmsh.finalize()
 
