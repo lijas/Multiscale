@@ -558,7 +558,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
         end
         nodepairs, masternodes = search_nodepairs(rve.grid, facepairs, rve.L◫)
         masternode = getnodeset(rve.grid, "cornerset") |> first
-        masternode = masternodes[4]
+        #masternode = masternodes[4]
         
         @info "Adding linear constraints"
         add_linear_constraints!(rve.grid, rve.ch, nodedofs, macroscale, nodepairs, masternode, rve.EXTRA_PROLONGATION, rve.SOLVE_FOR_FLUCT)

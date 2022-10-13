@@ -25,7 +25,7 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
                 cellset = 1:getncells(grid) |> collect
             )],
         BC_TYPE = MultiScale.STRONG_PERIODIC(),
-        SOLVE_FOR_FLUCT = true
+        SOLVE_FOR_FLUCT = false
     )
 
     state = State(rve)
