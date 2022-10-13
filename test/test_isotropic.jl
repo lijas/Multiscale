@@ -10,20 +10,8 @@ function build_and_run(;  elsize, dim::Int, L◫::Float64, h::Float64, macroscal
     corner = Vec{dim,Float64}( ( L◫/2, L◫/2, h/2 ) )
     grid = generate_grid(dim == 2 ? Quadrilateral : Hexahedron, nels, -corner, corner)
 
-
     #Rename facesets
     addnodeset!(grid, "cornerset", (x) -> x ≈ corner)
-    addnodeset!(grid, "right", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "right")))
-    addnodeset!(grid, "left",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "left")))
-    if dim == 3
-        addnodeset!(grid, "front", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "front")))
-        addnodeset!(grid, "back",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "back")))
-        addfaceset!(grid, "Γ⁺", union(getfaceset(grid, "right"), getfaceset(grid, "front"))) 
-        addfaceset!(grid, "Γ⁻", union(getfaceset(grid, "left"), getfaceset(grid, "back")))
-    elseif dim == 2
-        addfaceset!(grid, "Γ⁺", getfaceset(grid, "right")) 
-        addfaceset!(grid, "Γ⁻", getfaceset(grid, "left"))
-    end
 
     rve = MultiScale.RVE(;
         grid, 

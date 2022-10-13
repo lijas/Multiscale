@@ -13,17 +13,6 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
 
     #Rename facesets
     addnodeset!(grid, "cornerset", (x) -> x ≈ corner)
-    addnodeset!(grid, "right", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "right")))
-    addnodeset!(grid, "left",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "left")))
-    if dim == 3
-        addnodeset!(grid, "front", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "front")))
-        addnodeset!(grid, "back",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "back")))
-        addfaceset!(grid, "Γ⁺", union(getfaceset(grid, "right"), getfaceset(grid, "front"))) 
-        addfaceset!(grid, "Γ⁻", union(getfaceset(grid, "left"), getfaceset(grid, "back")))
-    elseif dim == 2
-        addfaceset!(grid, "Γ⁺", getfaceset(grid, "right")) 
-        addfaceset!(grid, "Γ⁻", getfaceset(grid, "left"))
-    end
 
 
     material = LinearElastic(E = 210.0, ν = 0.0 )
@@ -35,7 +24,8 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.STRONG_PERIODIC()
+        BC_TYPE = MultiScale.STRONG_PERIODIC(),
+        SOLVE_FOR_FLUCT = true
     )
 
     state = State(rve)

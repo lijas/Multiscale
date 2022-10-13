@@ -84,20 +84,15 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     nels =  (nelx, nelx, nelz) 
     corner = Vec{dim,Float64}( ( L◫/2, L◫/2, h/2 ) )
     grid = generate_grid(dim == 2 ? Quadrilateral : Hexahedron, nels, -corner, corner)
-    addnodeset!(grid, "cornerset", (x) -> isapprox(x, corner, atol=1e-3))
-    #addfaceset!(grid, "left",      (x) ->  isapprox(x[1],  +corner[1], atol=1e-3) )
-    #addfaceset!(grid, "right",     (x) ->  isapprox(x[1], -corner[1], atol=1e-3))
-    #addfaceset!(grid, "back",      (x) ->  isapprox(x[2],  -corner[2], atol=1e-3) )
-    #addfaceset!(grid, "front",     (x) ->  isapprox(x[2], +corner[2], atol=1e-3))
-    
-    addnodeset!(grid, "right", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "right")))
-    addnodeset!(grid, "left",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "left")))
-    addnodeset!(grid, "back", MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "back")))
-    addnodeset!(grid, "front",  MultiScale.faceset_to_nodeset(grid, getfaceset(grid, "front")))
-    addfaceset!(grid, "Γ⁺", union(getfaceset(grid, "right"),getfaceset(grid, "back"))) 
-    addfaceset!(grid, "Γ⁻", union(getfaceset(grid, "left"),getfaceset(grid, "front")))
-    addcellset!(grid, "Γ⁺", first.(getfaceset(grid, "Γ⁺")))
-    addcellset!(grid, "Γ⁻", first.(getfaceset(grid, "Γ⁻")))
+
+    addnodeset!(grid, "cornerset", (x) -> x ≈ corner)
+    if dim == 3
+        addfaceset!(grid, "Γ⁺", union(getfaceset(grid, "right"), getfaceset(grid, "back"))) 
+        addfaceset!(grid, "Γ⁻", union(getfaceset(grid, "left"), getfaceset(grid, "front")))
+    elseif dim == 2
+        addfaceset!(grid, "Γ⁺", getfaceset(grid, "right")) 
+        addfaceset!(grid, "Γ⁻", getfaceset(grid, "left"))
+    end
 
     rve = MultiScale.RVE(;
         grid, 
