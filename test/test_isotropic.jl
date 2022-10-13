@@ -57,8 +57,8 @@ end
     N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
 
     Ls = [5.0, 10.0]#, 30.0]#, 4.0, 7.0]
-    solvestyles = [MultiScale.SOLVE_FULL, MultiScale.SOLVE_FULL, MultiScale.SOLVE_SCHUR]
-    bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), STRONG_PERIODIC()]#, DIRICHLET(),]
+    solvestyles = [MultiScale.SOLVE_FULL, MultiScale.SOLVE_FULL, MultiScale.SOLVE_SCHUR, MultiScale.SOLVE_SCHUR]
+    bctypes = [RELAXED_DIRICHLET(), WEAK_PERIODIC(), STRONG_PERIODIC(),  STRONG_PERIODIC_FERRITE()]#, DIRICHLET(),]
     for (solvestyle, bctype) in zip(solvestyles, bctypes)
         for L in Ls
             println("Length: $L")

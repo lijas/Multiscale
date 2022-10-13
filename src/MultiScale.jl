@@ -24,7 +24,7 @@ function IterativeSolvers.Identity(a)
     return IterativeSolvers.Identity()
 end
 
-export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET, RELAXED_DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_FERRITE, DIRICHLET, RELAXED_DIRICHLET
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -212,11 +212,9 @@ end
 abstract type BCType end
 struct WEAK_PERIODIC <: BCType end
 struct STRONG_PERIODIC  <: BCType end
+struct STRONG_PERIODIC_FERRITE  <: BCType end
 struct RELAXED_DIRICHLET  <: BCType end
 struct DIRICHLET <: BCType end
-struct STRONG_PERIODIC_WITH_PAIRS  <: BCType 
-    pairs::Vector{Pair{Int,Int}}
-end
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
 struct RVE{dim, CACHE<:RVECache, LS, PR}
@@ -345,7 +343,8 @@ function RVE(;
         nμdofs = getnbasefunctions(ip_μ)
         @assert( SOLVE_STYLE == SOLVE_FULL)
     elseif BC_TYPE == DIRICHLET()
-    elseif BC_TYPE == STRONG_PERIODIC()
+    elseif BC_TYPE == STRONG_PERIODIC() 
+    elseif BC_TYPE == STRONG_PERIODIC_FERRITE() 
     elseif BC_TYPE == RELAXED_DIRICHLET()
         ip_μ = RelaxedDirichletInterpolation{dim}()
         nμdofs = getnbasefunctions(ip_μ)  
@@ -571,7 +570,7 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
             delete!(rve.grid.nodesets, "front")
             delete!(rve.grid.nodesets, "back")
         end
-    elseif rve.BC_TYPE == nothing#STRONG_PERIODIC()
+    elseif rve.BC_TYPE == STRONG_PERIODIC_FERRITE()
 
         #face_map = collect_periodic_faces(rve.grid, "Γ⁺", "Γ⁻", x -> rotate(x, basevec(Vec{dim}, dim), 1π))
 
@@ -917,171 +916,6 @@ function condense_rhs!(f::AbstractVecOrMat, ch::ConstraintHandler)
             f[ac.constrained_dof,:] .= 0.0
         end
     end
-end
-
-function search_nodepairs(grid::Grid{dim,C,T}, facepairs::Vector{<:Pair}, side_lengths::NTuple{dim,T}) where {dim,C,T}
-
-    SEARCH_TOL = 1e-3
-    nodepairs = Dict{Int,Int}()
-    Γ⁺_nodes = Int[]
-    Γ⁻_nodes = Int[]
-
-    dir = 0
-    masternodes = []
-    for (Γ⁺_name, Γ⁻_name) in facepairs
-        
-        dir += 1
-        Γ⁺_nodes = collect(getnodeset(grid, Γ⁺_name))
-        Γ⁻_nodes = collect(getnodeset(grid, Γ⁻_name))
-
-        for nodeid_r in Γ⁺_nodes
-
-            Xr = grid.nodes[nodeid_r].x
-
-            Xoffset = Vec{dim,T}(i -> i==dir ? side_lengths[dir] : 0.0)
-            found_pair = false
-            mindist = Inf
-
-            for nodeid_l in Γ⁻_nodes
-
-                Xl = grid.nodes[nodeid_l].x
-
-                dist = norm(Xr - (Xl + Xoffset))
-                mindist = min(mindist, dist) #For debugging
-                if isapprox(dist, 0.0, atol = SEARCH_TOL) #Vec(-4.440892098500626e-16, 0.0) ≈ zero(Vec{2}) ?????
-                    
-                    found_pair = true
-                    
-                    if haskey(nodepairs, nodeid_r) #Masternoded har constraint: alltså det är en hörnnod
-                        nodeid_r′ = nodepairs[nodeid_r]
-                        #@info "$nodeid_l => $nodeid_r, but $nodeid_r => $nodeid_r′, remapping $nodeid_l => $nodeid_r′."
-                        nodepairs[nodeid_l] = nodeid_r′
-                        push!(masternodes, nodeid_r′)
-                    elseif haskey(nodepairs, nodeid_l) && nodepairs[nodeid_l] == nodeid_r
-                       # @info "$nodeid_l => $nodeid_r already in the set, skipping."
-                    elseif haskey(nodepairs, nodeid_l)
-                        #@info "$nodeid_l => $nodeid_r, but $nodeid_l => $(nodepairs[nodeid_l]) already, skipping."
-                    else
-                        #@info "$nodeid_l => $nodeid_r "
-                        push!(nodepairs, nodeid_l => nodeid_r)
-                    end
-                    
-                    break;
-                end
-
-            end
-
-            if found_pair == false
-                error("No pair node found, $nodeid_r, mindist: $mindist")
-            end
-
-        end
-    end
-
-    return nodepairs, masternodes
-
-    #check
-    #=@info "check that no master nodes are slave nodes"
-    for (k,v) in nodepairs
-        if haskey(nodepairs, v)
-            @info "masternode $v exisits as slave"
-        end
-        #@info "$k => $v"
-    end
-
-    @info "check that no Γ- nodes has constraints"
-    for (Γ⁺_name, Γ⁻_name) in facepairs
-        Γ⁻_nodes = collect(getnodeset(grid, Γ⁻_name))
-        for n in Γ⁻_nodes
-            if !haskey(nodepairs, n)
-                @info "$n does not have a constraint"
-            end
-        end
-    end=#
-
-end
-
-function add_linear_constraints!(grid::Grid{dim}, ch::ConstraintHandler, nodedofs::Matrix{Int}, macroscale::MacroParameters, nodepairs#=::Dict{Int,Int}=#, masternode::Int, EXTRA_PROLONGATION, SOLVE_FOR_FLUCT) where dim
-
-    x̄ = zero(Vec{dim})
-
-    for (nodeid_s, nodeid_m) in nodepairs
-        
-        xm = grid.nodes[nodeid_m].x
-        xs = grid.nodes[nodeid_s].x
-        
-        x_jump = xs-xm
-        
-        ∇u = increase_dim(macroscale.∇u)
-        ∇θ = increase_dim(macroscale.∇θ)
-        ∇w = increase_dim(macroscale.∇w)
-
-        e₃ = basevec(Vec{dim,Float64})[dim]
-
-        z = xm[dim]
-
-        b = zero(Vec{dim})
-        if !SOLVE_FOR_FLUCT
-            #b = ∇u⋅x_jump - z*∇θ⋅x_jump + ∇w⋅x_jump * e₃
-            b = prolongation(xs, x̄, macroscale, EXTRA_PROLONGATION) - prolongation(xm, x̄, macroscale, EXTRA_PROLONGATION)
-        end
-
-        dof_s = nodedofs[:,nodeid_s]
-        dof_l = nodedofs[:,nodeid_m]
-        
-        for d in 1:dim #ncomponents?
-            lc = AffineConstraint(dof_s[d], [ (dof_l[d] => 1.0) ], b[d])
-            add!(ch, lc)
-        end
-        #add!(ch, Dirichlet(:u, Set([nodeid_r]), (x,t)->b[dim], [dim]))
-
-    end
-
-    #Lock a master node
-    #lock_masternode = -1
-    #if length(masternodes) == 0
-    #    @assert dim == 2
-    #    lock_masternode = first(nodepairs)[2] #Pick the first dof on Γ+
-    #else
-    #    lock_masternode = first(masternodes)
-    #end
-    
-    add!(ch, Ferrite.Dirichlet(:u, Set([masternode]), (x,t) -> zero(Vec{dim}), 1:dim))
-
-end
-
-function extract_nodedofs(dh::DofHandler, field::Symbol)
-
-    
-    fieldidx = Ferrite.find_field(dh, field)
-    field_dim = Ferrite.getfielddim(dh, fieldidx)
-    offset = Ferrite.field_offset(dh, :u)
-    _celldofs = fill(0, ndofs_per_cell(dh))
-    ncomps = field_dim
-    
-    nnodes = getnnodes(dh.grid)
-    node_dofs = zeros(Int, ncomps, nnodes)
-    visited = falses(nnodes)
-
-    for cellid in 1:getncells(dh.grid)
-
-        cell = dh.grid.cells[cellid]
-
-        celldofs!(_celldofs, dh, cellid) # update the dofs for this cell
-        for idx in 1:length(cell.nodes)
-            node = cell.nodes[idx]
-            if !visited[node]
-                noderange = (offset + (idx-1)*field_dim + 1):(offset + idx*field_dim) # the dofs in this node
-                for (i,c) in enumerate(1:ncomps)
-                    node_dofs[i,node] = _celldofs[noderange[c]]
-                end
-                visited[node] = true
-            end
-        end
-        
-    end
-
-    return node_dofs
 end
 
 function evaluate_uᴹ!(uM::Vector{Float64}, rve::RVE{dim}, macroparameters::MacroParameters) where {dim}
