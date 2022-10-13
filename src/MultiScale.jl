@@ -29,6 +29,7 @@ export WEAK_PERIODIC, STRONG_PERIODIC, DIRICHLET, RELAXED_DIRICHLET
 include("integrals.jl")
 include("extra_materials.jl")
 include("sampledomain.jl")
+include("utils.jl")
 #include("gmshdomain.jl")
 
 #=struct ShellPartFe2
@@ -866,9 +867,6 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
     (; nμdofs, nλdofs) = rve
 
     @info "combining"
-    #KK = vcat(hcat(matrices.Kuu, matrices.Kμu', matrices.Kλu'),
-    #          hcat(matrices.Kμu, zeros(Float64, nμdofs, nμdofs), zeros(Float64,nμdofs,nλdofs)),
-    #          hcat(matrices.Kλu, zeros(Float64, nλdofs, nμdofs), zeros(Float64,nλdofs,nλdofs)))
 
     KK = [matrices.Kuu matrices.Kμu' matrices.Kλu'; 
           matrices.Kμu spzeros(Float64, nμdofs, nμdofs) spzeros(Float64,nμdofs,nλdofs);
@@ -876,11 +874,7 @@ function _solve_it_full!(rve::RVE{dim}, state::State) where dim
 
     ff = vcat(matrices.fext_u, matrices.fext_μ, matrices.fext_λ)
     
-    Ferrite._condense_sparsity_pattern!(KK, ch.acs)
-
-    #@info "Extracting rows from stiffness matrix"
-    #KKK = KK[ch.prescribed_dofs,:]
-    #fff = copy( ff[ch.prescribed_dofs] )
+    _update_this_to_ferrite_condense_sparsity_pattern!(KK, ch.acs)
     
     @info "applying"
     apply!(KK, ff, ch)
