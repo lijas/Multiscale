@@ -298,7 +298,7 @@ function RVE(;
 
     #Get size of rve
     x_center = rvecenter(grid)
-    if !isapprox(norm(x_center), 0.0, atol = 1e-15)
+    if !isapprox(norm(x_center), 0.0, atol = 1e-14)
         error("RVE must be centered $(x_center)")
     end
     side_length = ntuple( d -> rvesize(grid; dir = d), dim)
