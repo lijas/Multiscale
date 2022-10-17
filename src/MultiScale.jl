@@ -15,7 +15,7 @@ using IterativeSolvers
 using SymRCM
 using LinearSolve: solve, LinearProblem, LinearSolve
 using BlockArrays
-using MKLSparse # Snabbare om man kör men julia --threads 4
+#using MKLSparse # Snabbare om man kör men julia --threads 4
 
 using Preconditioners
 using IncompleteLU
