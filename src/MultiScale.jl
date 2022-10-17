@@ -336,7 +336,11 @@ function RVE(;
     nμdofs = 0
 
     @assert( haskey(grid.facesets, "right") )
-    @assert( haskey(grid.facesets, "back") )
+    @assert( haskey(grid.facesets, "left") )
+    if dim == 3
+        @assert( haskey(grid.facesets, "back") )
+        @assert( haskey(grid.facesets, "front") )
+    end
 
     if BC_TYPE == WEAK_PERIODIC()
         ip_μ   = TractionInterpolation{dim}()
@@ -457,7 +461,7 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
     end
 
     #
-    u = w*φw()
+    u += w*φw()
     
     for α in 1:d
         u += φg(α) * ∇w[α]
