@@ -423,6 +423,8 @@ end
 
 function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::MacroParameters, with_extra) where {dim,T}
 
+    #return prolongation2(x, x̄, macroparamters, with_extra)
+    
     (; ∇u, ∇w, ∇θ, u, w, θ) = macroparamters
     
     d = dim-1
@@ -477,6 +479,40 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
     end
 
     return u
+   
+end
+
+
+function prolongation2(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::MacroParameters, with_extra) where {dim,T}
+
+    (; ∇u, ∇w, ∇θ, u, w, θ) = macroparamters
+
+    ∇u = increase_dim(∇u)
+    ∇w = increase_dim(∇w)
+    ∇θ = increase_dim(∇θ) 
+    u  = increase_dim(u)
+    #w  = increase_dim(w)
+    θ  = increase_dim(θ)
+
+    e = basevec(Vec{dim,Float64})
+    z = x[dim]
+    
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    Îz = (e[3]⊗e[3])
+
+    um = zero(Vec{dim,T})
+    um += u
+    um += w*e[3]
+    um += -z*θ
+    um += ∇u ⋅ (x -x̄) 
+    um += (∇w ⋅ (x -x̄))*e[3]
+    um += -z*∇θ ⋅ (x -x̄)
+    if with_extra
+        #@show Î⊡((x-x̄)⊗(x-x̄))
+        um += 0.5*((∇θ⊡((x-x̄)⊗(x-x̄)))*e[3])
+    end
+
+    return um
 
 end
 
