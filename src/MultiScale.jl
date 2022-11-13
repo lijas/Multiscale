@@ -442,10 +442,10 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
     
     function φκ(α,β) 
         _φ = zero(Vec{dim,T})
-        _φ = -z*((x - x̄)⋅e[β])*e[α] 
+        _φ = -z*(x - x̄)⋅(e[β]⊗e[α]) 
 
         if with_extra 
-            _φ += 0.5*( (e[α]⊗e[β])⊡((x-x̄)⊗(x-x̄)) )*e[3]
+            _φ += ( 0.5*(e[α]⊗e[β])⊡((x-x̄)⊗(x-x̄)) )*e[3]
         end
 
         return _φ

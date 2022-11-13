@@ -40,7 +40,7 @@ function _calculate_response(N::Ref{<:SymmetricTensor}, V::Ref{<:Vec}, M::Ref{<:
 
         states = materialstates[localid]
 
-        _N,_V,_M = calculate_NVM(cv_u, X, ae, material, states)
+        _N,_V,_M = calculate_NVM(cv_u, X, ae, material, states, rve.EXTRA_PROLONGATION)
 
         N[] += _N * (1/A◫)
         V[] += _V * (1/A◫)
@@ -49,34 +49,40 @@ function _calculate_response(N::Ref{<:SymmetricTensor}, V::Ref{<:Vec}, M::Ref{<:
 
 end
 
-function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states) where dim
+function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states, EXTRA_PROLONGATION) where dim
 
-    N = zero(SymmetricTensor{2,dim-1,Float64})
-    M = zero(Tensor{2,dim-1,Float64})
-    V = zero(Vec{dim-1,Float64})
+    N = zero(SymmetricTensor{2,dim,Float64})
+    M = zero(Tensor{2,dim,Float64})
+    V = zero(Vec{dim,Float64})
     
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    x̄ = zero(Vec{dim,Float64})
     for qp in 1:getnquadpoints(cv)
 
         dV = getdetJdV(cv, qp)
-        xyz = spatial_coordinate(cv, qp, X)
-        xₚ  = Vec{dim-1}(i -> xyz[i])
-        z = xyz[dim]
-        ε   = symmetric( function_gradient(cv, qp, ae) )
+        x = spatial_coordinate(cv, qp, X)
+        x̂ = Î ⋅ x
+        z = x[dim]
 
+        ε = symmetric( function_gradient(cv, qp, ae) )
         if dim == 2
             σ, _, _ = material_response(PlaneStrain(), material, ε, states[qp])
         else
             σ, _, _  = material_response(material, ε, states[qp])
         end
 
-        σₚ = SymmetricTensor{2,dim-1,Float64}((i,j) -> σ[i,j])
-        σz = Vec{dim-1,Float64}((i) -> σ[i,dim])
-
-        N += (σₚ) * dV
-        V += (σz) * dV
-        M += (z*σₚ + σz ⊗ xₚ) * dV
+        N += (Î ⋅ σ ⋅ Î) * dV
+        V += (σ ⋅ e[dim]) * dV
+        M += (z*(Î ⋅ σ ⋅ Î)) * dV
+        if !EXTRA_PROLONGATION
+            M += ((σ ⋅ e[dim]) ⊗ (x̂ - x̄)) * dV
+        end
 
     end    
+    _N = SymmetricTensor{2,dim-1,Float64}((i,j) -> N[i,j])
+    _V = Vec{dim-1,Float64}((i) -> V[i])
+    _M = SymmetricTensor{2,dim-1,Float64}((i,j) -> M[i,j])
 
-    return N, V, M
+    return _N, _V, _M
 end
