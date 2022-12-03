@@ -22,6 +22,7 @@ function build_and_run(;  elsize, dim::Int, L◫::Float64, h::Float64, macroscal
             )],
         BC_TYPE = bctype,
         SOLVE_STYLE = solvestyle,
+        EXTRA_PROLONGATION = false,
         PERFORM_CHECKS = true,
         SOLVE_FOR_FLUCT = SOLVE_FOR_FLUCT
     )
@@ -29,7 +30,12 @@ function build_and_run(;  elsize, dim::Int, L◫::Float64, h::Float64, macroscal
     state = State(rve)
     MultiScale.solve_rve(rve, macroscale, state)
 
-    N,V,M = MultiScale.calculate_response(rve, state)
+    N,V,M = MultiScale.calculate_response(rve, state, false)
+    N_AD, V_AD, M_AD  = MultiScale.calculate_response(rve, state, true)
+
+    @test N ≈ N_AD
+    @test V ≈ V_AD
+    @test M ≈ M_AD
 
 
     return N,V,M 
@@ -69,9 +75,6 @@ end
             @test isapprox(M[1,1], M_plate[1,1], atol = 0.5)
         end
     end
-
-
-    @show Ms
 
 end
 

@@ -230,3 +230,75 @@ function integrate_checks(val1::Vector{Float64}, val2::Vector{Float64}, cv_u::Ce
     end
 
 end
+
+function u◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    u◫ = zero(Vec{dim,T})
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        u = function_value(cv_u, iqp, ae)
+        u◫ += (Î ⋅ u) * dV 
+    end
+    return u◫
+end
+
+function w◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    w = zero(T)
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        u = function_value(cv_u, iqp, ae)
+        w += (e[3] ⋅ u) * dV 
+    end
+    return w
+end
+
+function θ◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}, x::Vector{Vec{dim,T}}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    θ◫ = zero(Vec{dim,T})
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        θ = function_value(cv_u, iqp, ae)
+        _,_,z = spatial_coordinate(cv_u, iqp, x)
+        θ◫ += (z*Î ⋅ θ) * dV 
+    end
+    return θ◫
+end
+
+function h◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    h◫ = zero(Tensor{2,dim,T})
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        ∇u = function_gradient(cv_u, iqp, ae)
+        h◫ += (Î ⋅ ∇u ⋅ Î ) * dV 
+    end
+    return h◫
+end
+
+function g◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    g◫ = zero(Vec{dim,T})
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        ∇u = function_gradient(cv_u, iqp, ae)
+        g◫ += (e[3] ⋅ ∇u) * dV 
+    end
+    return g◫
+end
+
+function κ◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}, x::Vector{Vec{dim,T}}) where {dim,T}
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    κ◫ = zero(Tensor{2,dim,T})
+    for iqp in 1:getnquadpoints(cv_u)
+        dV = getdetJdV(cv_u, iqp)
+        ∇θ = function_gradient(cv_u, iqp, ae)
+        _,_,z = spatial_coordinate(cv_u, iqp, x)
+        κ◫ += (z*Î ⋅ ∇θ ⋅ Î ) * dV 
+    end
+    return κ◫
+end
