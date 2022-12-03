@@ -451,34 +451,34 @@ function prolongation(x::Vec{dim,T}, x̄::Vec{dim,Float64}, macroparamters::Macr
         return _φ
     end
 
-    u = zero(Vec{dim,T})
+    um = zero(Vec{dim,T})
 
     #
     for α in 1:d
-        u += φu(α) * u[α]
+        um += φu(α) * u[α]
     end
 
     for α in 1:d, β in 1:d
-        u += φh(α,β) * ∇u[α,β]
+        um += φh(α,β) * ∇u[α,β]
     end
 
     #
-    u += w*φw()
+    um += w*φw()
     
     for α in 1:d
-        u += φg(α) * ∇w[α]
+        um += φg(α) * ∇w[α]
     end
 
     #
     for α in 1:d
-        u += φθ(α) * θ[α]
+        um += φθ(α) * θ[α]
     end
 
     for α in 1:d, β in 1:d
-        u += φκ(α,β) * ∇θ[α,β]
+        um += φκ(α,β) * ∇θ[α,β]
     end
 
-    return u
+    return um
    
 end
 
