@@ -11,14 +11,14 @@ include("example_utils.jl")
 function run_isotropic()
 
     dim = 3
-    h = 2.0
+    h = 1.0
 
     material = LinearElastic(E = 210.0, ν = 0.3 )
 
     macroscale = MultiScale.MacroParameters{2}(
-        ∇u = Tensor{2,2}((0.00, 0.00, 0.0, 0.00)), 
-        ∇w = Vec{2}((0.0, 0.00)), 
-        ∇θ = Tensor{2,2}((0.1, 0.00, 0.00, 0.1)), 
+        ∇u = Tensor{2,2}((0.10, 0.30, 0.4, 0.06)), 
+        ∇w = Vec{2}((0.1, 0.10)), 
+        ∇θ = Tensor{2,2}((1.0, 0.1, 0.10, 0.2)), 
         w = 0.0, 
         θ = Vec{2}((0.0,0.0))
     )
@@ -36,8 +36,8 @@ function run_isotropic()
         push!(Vs, V)
     end
 
-    @show N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
-    @show Ns, Vs, Ms
+    N_plate, M_plate, V_plate = calculate_anlytical(material, macroscale, [0.0], [-h/2, h/2])
+    
     nothing
     #=
     #Plot results 
@@ -111,7 +111,14 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     state = State(rve)
     MultiScale.solve_rve(rve, macroscale, state)
 
-    N,V,M = MultiScale.calculate_response(rve, state)
+    N,V,M = MultiScale.calculate_response(rve, state, false)
+    N_AD, V_AD, M_AD  = MultiScale.calculate_response(rve, state, true)
+
+    
+    @show N N_AD N ≈ N_AD
+    @show V V_AD V ≈ V_AD
+    @show M M_AD M ≈ M_AD
+
 
     vtk_grid("rve_isotropic_$(round(Int,L◫))", rve.dh) do vtk
         vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)])

@@ -1,7 +1,7 @@
 
-function calculate_response(rve::RVE{dim}, state::State) where dim
+function calculate_response(rve::RVE{dim}, state::State, AD = false) where dim
 
-    N = Ref( zero(SymmetricTensor{2,dim-1,Float64}) )
+    N = Ref( zero(Tensor{2,dim-1,Float64}) )
     M = Ref( zero(Tensor{2,dim-1,Float64}) )
     V = Ref( zero(Vec{dim-1,Float64}) )
     
@@ -11,13 +11,13 @@ function calculate_response(rve::RVE{dim}, state::State) where dim
         cellset = part.cellset
         matstates = state.partstates[partid].materialstates
 
-        _calculate_response(N, V, M, rve, material, matstates, cellset, state.a)
+        _calculate_response(N, V, M, rve, material, matstates, cellset, state.a, AD)
     end
 
     return N[], V[], M[]
 end
 
-function _calculate_response(N::Ref{<:SymmetricTensor}, V::Ref{<:Vec}, M::Ref{<:Tensor}, rve::RVE{dim}, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}) where {dim,MS<:AbstractMaterialState}
+function _calculate_response(N::Ref{<:Tensor}, V::Ref{<:Vec}, M::Ref{<:Tensor}, rve::RVE{dim}, material::AbstractMaterial, materialstates::Vector{Vector{MS}}, cellset::Vector{Int}, a::Vector{Float64}, AD) where {dim,MS<:AbstractMaterialState}
 
     (; udofs, X, ae, diffresult_μ) = rve.cache
     (; dh, cv_u)    = rve
@@ -40,7 +40,7 @@ function _calculate_response(N::Ref{<:SymmetricTensor}, V::Ref{<:Vec}, M::Ref{<:
 
         states = materialstates[localid]
 
-        _N,_V,_M = calculate_NVM(cv_u, X, ae, material, states, rve.EXTRA_PROLONGATION)
+        _N,_V,_M = calculate_NVM(cv_u, X, ae, material, states, rve.EXTRA_PROLONGATION, AD)
 
         N[] += _N * (1/A◫)
         V[] += _V * (1/A◫)
@@ -49,9 +49,19 @@ function _calculate_response(N::Ref{<:SymmetricTensor}, V::Ref{<:Vec}, M::Ref{<:
 
 end
 
-function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states, EXTRA_PROLONGATION) where dim
+function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states, EXTRA_PROLONGATION, AD) where dim
 
-    N = zero(SymmetricTensor{2,dim,Float64})
+    if AD
+        _calculate_NVM_AD(cv, X, ae, material, states, EXTRA_PROLONGATION)
+    else
+        _calculate_NVM(cv, X, ae, material, states, EXTRA_PROLONGATION)
+    end
+
+end
+
+function _calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states, EXTRA_PROLONGATION) where dim
+
+    N = zero(Tensor{2,dim,Float64})
     M = zero(Tensor{2,dim,Float64})
     V = zero(Vec{dim,Float64})
     
@@ -73,16 +83,89 @@ function calculate_NVM(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Ve
         end
 
         N += (Î ⋅ σ ⋅ Î) * dV
-        V += (σ ⋅ e[dim]) * dV
+        V += (Î⋅σ ⋅ e[dim]) * dV
         M += (z*(Î ⋅ σ ⋅ Î)) * dV
         if !EXTRA_PROLONGATION
-            M += ((σ ⋅ e[dim]) ⊗ (x̂ - x̄)) * dV
+            M += ((Î⋅σ ⋅ e[dim]) ⊗ (x̂ - x̄)) * dV
+        else#EXTRA_PROLONGATION
+            _tmp = ((Î⋅σ ⋅ e[dim]) ⊗ (x̂ - x̄))
+            M +=  0.5*(_tmp - _tmp') * dV
         end
 
     end    
-    _N = SymmetricTensor{2,dim-1,Float64}((i,j) -> N[i,j])
+    _N = Tensor{2,dim-1,Float64}((i,j) -> N[i,j])
     _V = Vec{dim-1,Float64}((i) -> V[i])
-    _M = SymmetricTensor{2,dim-1,Float64}((i,j) -> M[i,j])
+    _M = Tensor{2,dim-1,Float64}((i,j) -> M[i,j])
 
     return _N, _V, _M
+end
+
+function _calculate_NVM_AD(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae::Vector{Float64}, material::AbstractMaterial, states, EXTRA_PROLONGATION) where dim
+
+    e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
+    x̄ = zero(Vec{dim,Float64})
+
+
+    _N = zeros(Float64, dim-1, dim-1)
+    _M = zeros(Float64, dim-1, dim-1)
+    _V = zeros(Float64, dim-1)
+    for qp in 1:getnquadpoints(cv)
+
+        dV = getdetJdV(cv, qp)
+        x = spatial_coordinate(cv, qp, X)
+
+        ε = symmetric( function_gradient(cv, qp, ae) )
+        if dim == 2
+            σ, _, _ = material_response(PlaneStrain(), material, ε, states[qp])
+        else
+            σ, _, _  = material_response(material, ε, states[qp])
+        end
+
+        for α in 1:(dim-1), β in 1:(dim-1)
+            pertubations = MultiScale.MacroParameters{2}(
+                ∇u = Tensor{2,2}( (i,j) -> (i==α && j==β ) ? 1.0 : 0.0)
+            )
+
+            δε = gradient( x -> prolongation(x, x̄, pertubations, EXTRA_PROLONGATION), x)
+            _N[α,β] += (σ ⊡ δε) * dV
+        end
+
+
+        for α in 1:(dim-1), β in 1:(dim-1)
+            pertubations = MultiScale.MacroParameters{2}(
+                ∇θ = Tensor{2,2}( (i,j) -> (i==α && j==β ) ? 1.0 : 0.0)
+            )
+            δε = gradient( x -> prolongation(x, x̄, pertubations, EXTRA_PROLONGATION), x)
+            _M[α,β] += (σ ⊡ δε) * dV
+        end
+
+        for α in 1:(dim-1)
+            pertubations = MultiScale.MacroParameters{2}(
+                ∇w = Vec{2}( (i) -> (i==α) ? 0.5 : 0.0),
+                θ = Vec{2}( (i) -> (i==α) ? -0.5 : 0.0)
+            )
+
+            δε = symmetric(gradient( x -> prolongation(x, x̄, pertubations, EXTRA_PROLONGATION), x))
+            #@show (σ ⊡ δε)
+            _V[α] += (σ ⊡ δε) * dV
+        end
+
+        #for α in 1:(dim-1)
+        #    pertubations = MultiScale.MacroParameters{2}(
+        #        θ = Vec{2}( (i) -> (i==α) ? 1.0 : 0.0)
+        #    )
+
+        #    δε = symmetric(gradient( x -> prolongation(x, x̄, pertubations, EXTRA_PROLONGATION), x))
+            #@show x
+        #    _V[α] -= (σ ⊡ δε) * dV
+        #end
+
+    end
+
+    N = Tensor{2,dim-1,Float64}((i,j) -> _N[i,j])
+    V = Vec{dim-1,Float64}((i) -> _V[i])
+    M = -Tensor{2,dim-1,Float64}((i,j) -> _M[i,j])
+
+    return N, V, M
 end
