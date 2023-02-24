@@ -33,6 +33,16 @@ function build_and_run(;  elsize, dim::Int, L◫::Float64, h::Float64, macroscal
     N,V,M, cellstresses = MultiScale.calculate_response(rve, state, false)
     N_AD, V_AD, M_AD, cellstresses  = MultiScale.calculate_response(rve, state, true)
 
+    a_fluct = state.a[1:rve.nudofs] - rve.matrices.uM
+    
+    u◫, w◫, θ◫, h◫, g◫, κ◫ = MultiScale.check_asdf(rve, a_fluct)
+
+    @test u◫ ≈ 0.0
+    @test w◫ ≈ 0.0
+    @test θ◫ ≈ 0.0
+    @test h◫ ≈ 0.0
+    @test g◫ ≈ 0.0
+    @test κ◫ ≈ 0.0
 
     @test N ≈ N_AD
     @test V ≈ V_AD

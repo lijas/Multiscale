@@ -281,11 +281,12 @@ end
 
 function g◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
     e = basevec(Vec{dim,Float64})
+    Î = (e[1]⊗e[1]) + (e[2]⊗e[2])
     g◫ = zero(Vec{dim,T})
     for iqp in 1:getnquadpoints(cv_u)
         dV = getdetJdV(cv_u, iqp)
         ∇u = function_gradient(cv_u, iqp, ae)
-        g◫ += (e[3] ⋅ ∇u) * dV 
+        g◫ += Î ⋅ (e[3] ⋅ ∇u) * dV 
     end
     return g◫
 end

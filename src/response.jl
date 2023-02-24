@@ -177,4 +177,52 @@ function _calculate_NVM_AD(cv::CellVectorValues, X::Vector{Vec{dim,Float64}}, ae
     return N, V, M, cellstresses
 end
 
+
+
+function check_asdf(rve::RVE{dim}, a_fluct) where {dim}
+
+    (; dh, grid, cv_u) = rve
+
+    nudofs = getnbasefunctions(cv_u)
+    ae = zeros(Float64, nudofs)
+    udofs = zeros(Int, nudofs)
+    coords = zeros(Vec{dim,Float64}, Ferrite.nnodes_per_cell(dh.grid))
+
+    residual1 = zero(Tensor{2,3,Float64,9})
+    residual2 = zero(Vec{3,Float64})
+
+    u◫ = zero(Vec{3})
+    w◫ = zero(Float64)
+    θ◫ = zero(Vec{3})
+    h◫ = zero(Tensor{2,3})
+    g◫ = zero(Vec{3})
+    κ◫ = zero(Tensor{2,3})
+
+    for cellid in 1:getncells(grid)
+        celldofs!(udofs, dh, cellid)
+        getcoordinates!(coords, dh.grid, cellid)
+        disassemble!(ae, a_fluct, udofs)
+        reinit!(cv_u, coords)
+
+        for iqp in 1:getnquadpoints(cv_u)
+            dV = getdetJdV(cv_u, iqp)
+            us = function_value(cv_u, iqp, ae)
+            xyz = spatial_coordinate(cv_u, iqp, coords)
+            residual1 += us ⊗ xyz *dV
+            residual2 += us * dV
+        end
+    
+        Ω = rve.Ω◫
+        I = rve.I◫
+
+        u◫ += 1/Ω * MultiScale.u◫_operator(cv_u, ae)
+        w◫ += 1/Ω * MultiScale.w◫_operator(cv_u, ae)
+        θ◫ -= 1/I * MultiScale.θ◫_operator(cv_u, ae, coords)
+        h◫ += 1/Ω * MultiScale.h◫_operator(cv_u, ae)
+        g◫ += 1/Ω * MultiScale.g◫_operator(cv_u, ae)
+        κ◫ -= 1/I * MultiScale.κ◫_operator(cv_u, ae, coords)
+
+    end
+
+    return u◫, w◫, θ◫, h◫, g◫, κ◫
 end
