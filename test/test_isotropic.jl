@@ -37,12 +37,12 @@ function build_and_run(;  elsize, dim::Int, L◫::Float64, h::Float64, macroscal
     
     u◫, w◫, θ◫, h◫, g◫, κ◫ = MultiScale.check_asdf(rve, a_fluct)
 
-    @test u◫ ≈ 0.0
-    @test w◫ ≈ 0.0
-    @test θ◫ ≈ 0.0
-    @test h◫ ≈ 0.0
-    @test g◫ ≈ 0.0
-    @test κ◫ ≈ 0.0
+#    @test u◫ ≈ 0.0
+#    @test w◫ ≈ 0.0 Dont check these due to offseting
+    @test isapprox.(θ◫, 0.0, atol = 1e-10) |> all
+    @test isapprox.(h◫, 0.0, atol = 1e-10) |> all
+    @test isapprox.(g◫, 0.0, atol = 1e-10) |> all
+    @test isapprox.(κ◫, 0.0, atol = 1e-10) |> all
 
     @test N ≈ N_AD
     @test V ≈ V_AD

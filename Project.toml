@@ -1,7 +1,7 @@
 name = "MultiScale"
 uuid = "be8ad520-6c63-44cf-ac3a-bd6c45408a87"
 authors = ["Elias <elias.isak.borjesson@gmail.com>"]
-version = "0.1.6"
+version = "0.1.7"
 
 [deps]
 AlgebraicMultigrid = "2169fc97-5a83-5252-b627-83903c6c433c"
