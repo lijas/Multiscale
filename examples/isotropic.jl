@@ -111,8 +111,8 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     state = State(rve)
     MultiScale.solve_rve(rve, macroscale, state)
 
-    N,V,M = MultiScale.calculate_response(rve, state, false)
-    N_AD, V_AD, M_AD  = MultiScale.calculate_response(rve, state, true)
+    N,V,M, cellstresses = MultiScale.calculate_response(rve, state, false)
+    N_AD, V_AD, M_AD, cellstresses  = MultiScale.calculate_response(rve, state, true)
 
     
     @show N N_AD N ≈ N_AD

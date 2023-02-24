@@ -156,7 +156,7 @@ function build_and_run2(; dim::Int, L◫::Float64, macroscale::MultiScale.MacroP
 
     a = MultiScale.solve_rve(rve, macroscale, state)
 
-    N,V,M = MultiScale.calculate_response(rve, state)
+    N,V,M, cellstresses = MultiScale.calculate_response(rve, state)
 
     addcellset!(grid, "Γ⁺", first.(getfaceset(grid, "Γ⁺")))
     addcellset!(grid, "Γ⁻", first.(getfaceset(grid, "Γ⁻")))
