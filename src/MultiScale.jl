@@ -24,7 +24,7 @@ function IterativeSolvers.Identity(a)
     return IterativeSolvers.Identity()
 end
 
-export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_FERRITE, DIRICHLET, RELAXED_DIRICHLET
+export WEAK_PERIODIC, STRONG_PERIODIC, STRONG_PERIODIC_FERRITE, DIRICHLET, RELAXED_DIRICHLET, RELAXED_PERIODIC
 
 include("integrals.jl")
 include("extra_materials.jl")
@@ -214,6 +214,7 @@ struct WEAK_PERIODIC <: BCType end
 struct STRONG_PERIODIC  <: BCType end
 struct STRONG_PERIODIC_FERRITE  <: BCType end
 struct RELAXED_DIRICHLET  <: BCType end
+struct RELAXED_PERIODIC  <: BCType end
 struct DIRICHLET <: BCType end
 @enum SolveStyle SOLVE_SCHUR SOLVE_FULL
 
@@ -352,6 +353,9 @@ function RVE(;
     elseif BC_TYPE == RELAXED_DIRICHLET()
         ip_μ = RelaxedDirichletInterpolation{dim}()
         nμdofs = getnbasefunctions(ip_μ)  
+    elseif BC_TYPE == RELAXED_PERIODIC()
+        ip_μ = RelaxedDirichletInterpolation{dim}()
+        nμdofs = getnbasefunctions(ip_μ)  
     else
         error("Wrong BCTYPE")
     end
@@ -359,6 +363,7 @@ function RVE(;
     nλdofs = 0
     if VOLUME_CONSTRAINT
         nλdofs += dim-1
+        #nλdofs += dim
     end
     
     cache = RVECache(dim, nnodes, nudofs_per_cell, nμdofs, nλdofs)
@@ -626,12 +631,46 @@ function _apply_macroscale!(rve::RVE{dim}, macroscale::MacroParameters, state::S
             1:dim
         )
         add!(rve.ch, pbc)
+
+        #=dbc = Ferrite.Dirichlet(
+            :u,
+            getnodeset(rve.grid, "cornerset"),
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            1:dim
+        )
+        add!(rve.ch, dbc)=#
+    elseif rve.BC_TYPE == RELAXED_PERIODIC()
+        assemble_face!(rve, macroscale, state.a)
+
+        face_map = Ferrite.PeriodicFacePair[]
+        collect_periodic_faces!(face_map, rve.grid, "right", "left", x -> x+Vec((-rve.L◫[1], 0.0, 0.0)))
+        collect_periodic_faces!(face_map, rve.grid, "back", "front", x -> x+Vec((0.0, -rve.L◫[2], 0.0)))
+        @assert length(face_map) == (length(getfaceset(rve.grid, "right"))+length(getfaceset(rve.grid, "back")))
+
+        pbc = Ferrite.PeriodicDirichlet(
+            :u,
+            face_map,
+            (x, t) -> solve_uˢ ? zero(Vec{dim-1}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION)[1:dim-1],
+            1:(dim-1)
+        )
+        add!(rve.ch, pbc)
+
+        dbc = Ferrite.Dirichlet(
+            :u,
+            getnodeset(rve.grid, "cornerset"),
+            (x, t) -> solve_uˢ ? zero(Vec{dim}) : uᴹ(x, x̄, macroscale, rve.EXTRA_PROLONGATION),
+            1:dim
+        )
+        add!(rve.ch, dbc)
     end
 
     if rve.VOLUME_CONSTRAINT
         for d in 1:dim-1
             rve.matrices.fext_λ[d] +=  solve_uˢ ? 0.0 : -macroscale.θ[d]
         end
+        #=for d in 1:dim
+            rve.matrices.fext_λ[d+2] +=  0.0#solve_uˢ ? 0.0 : -macroscale.θ[d]
+        end=#
     end
 
     @info "Closing ch"
@@ -703,9 +742,9 @@ function _assemble!(material::AbstractMaterial, assembler_u, assembler_λ, mater
         #---
         #=for d in 1:dim
             fill!(fλ, 0.0)
-            diffresult_λ = integrate_fλu!(diffresult_λ, fλ, cv_u, ae, d); 
-            Ke = DiffResults.jacobian(diffresult_λ)
-            matrices.Kλu[[d], udofs] += -Ke * (1/Ω◫)
+            fill!(ke_λ, 0.0)
+            integrate_fλu_2!(ke_λ, fλ, cv_u, ae, d); 
+            Ferrite.assemble!(assembler_λ, Vec{1,Int}((d+2,)), udofs, ke_λ * (1/Ω◫)) #matrices.Kλu[[d], udofs] += -ke_λ * (1/Ω◫) 
         end =#
 
         if VOLUME_CONSTRAINT
