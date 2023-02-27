@@ -16,9 +16,9 @@ function run_isotropic()
     material = LinearElastic(E = 210.0, ν = 0.3 )
 
     macroscale = MultiScale.MacroParameters{2}(
-        ∇u = Tensor{2,2}((0.10, 0.30, 0.4, 0.06)), 
-        ∇w = Vec{2}((0.1, 0.10)), 
-        ∇θ = Tensor{2,2}((1.0, 0.1, 0.10, 0.2)), 
+        ∇u = Tensor{2,2}((0.00, 0.00, 0.0, 0.00)), 
+        ∇w = Vec{2}((1.0, 0.00)), 
+        ∇θ = Tensor{2,2}((0.0, 0.0, 0.00, 0.0)), 
         w = 0.0, 
         θ = Vec{2}((0.0,0.0))
     )
@@ -27,7 +27,7 @@ function run_isotropic()
     Vs = []
     Ms = []
     
-    Ls = [2.0]#, 10., 20.0]#, 30.0]#, 4.0, 7.0]
+    Ls = [3.0]#, 10., 20.0]#, 30.0]#, 4.0, 7.0]
     for L in Ls
         println("Length: $L")
         N, V, M = build_and_run(dim=dim, L◫=L, h=h, macroscale=macroscale, material=material)
@@ -78,7 +78,7 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
     #L◫ = 10.0
     #h = 2.0
     
-    elsize = 0.5
+    elsize = 0.2
     nelx = round(Int, L◫/elsize)
     nelz = round(Int, h/elsize)
     nels =  (nelx, nelx, nelz) 
@@ -101,9 +101,8 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
                 material = material,
                 cellset = 1:getncells(grid) |> collect
             )],
-        BC_TYPE = MultiScale.STRONG_PERIODIC(),
-        SOLVE_STYLE = MultiScale.SOLVE_SCHUR,
-        SOLVE_FOR_FLUCT = false,
+        BC_TYPE = MultiScale.ENRICHED_PERIODIC(),
+        SOLVE_STYLE = MultiScale.SOLVE_FULL,
         EXTRA_PROLONGATION = false,
 
     )
@@ -113,15 +112,24 @@ function build_and_run(; dim::Int, L◫::Float64, h::Float64, macroscale::MultiS
 
     N,V,M, cellstresses = MultiScale.calculate_response(rve, state, false)
     N_AD, V_AD, M_AD, cellstresses  = MultiScale.calculate_response(rve, state, true)
-
     
     @show N N_AD N ≈ N_AD
     @show V V_AD V ≈ V_AD
     @show M M_AD M ≈ M_AD
 
+    a_fluct = state.a[1:rve.nudofs] - rve.matrices.uM
+    @show state.a[(end-2):end]
+    u◫, w◫, θ◫, h◫, g◫, κ◫ = MultiScale.check_asdf(rve, a_fluct)
+    @show "Fluct" u◫ w◫ θ◫ h◫ g◫ κ◫
 
-    vtk_grid("rve_isotropic_$(round(Int,L◫))", rve.dh) do vtk
-        vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)])
+    u◫, w◫, θ◫, h◫, g◫, κ◫ = MultiScale.check_asdf(rve, rve.matrices.uM)
+    @show "Fluct" u◫ w◫ θ◫ h◫ g◫ κ◫
+
+    vtk_grid("rve_isotropic_enriched_$(round(Int,L◫))", rve.dh) do vtk
+        vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)], "u")
+        vtk_point_data(vtk, rve.dh, rve.matrices.uM[1:ndofs(rve.dh)], "uM")
+        vtk_point_data(vtk, rve.dh, rve.matrices.uξ[1:ndofs(rve.dh)], "uξ")
+        vtk_point_data(vtk, rve.dh, state.a[1:ndofs(rve.dh)] - rve.matrices.uM[1:ndofs(rve.dh)]  - rve.matrices.uξ[1:ndofs(rve.dh)], "uμ")
         vtk_cellset(vtk, grid)
     end
 

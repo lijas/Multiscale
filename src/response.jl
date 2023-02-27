@@ -197,6 +197,8 @@ function check_asdf(rve::RVE{dim}, a_fluct) where {dim}
     h◫ = zero(Tensor{2,3})
     g◫ = zero(Vec{3})
     κ◫ = zero(Tensor{2,3})
+    xcenter = 0.0
+    zcenter = 0.0
 
     for cellid in 1:getncells(grid)
         celldofs!(udofs, dh, cellid)
@@ -221,8 +223,11 @@ function check_asdf(rve::RVE{dim}, a_fluct) where {dim}
         h◫ += 1/Ω * MultiScale.h◫_operator(cv_u, ae)
         g◫ += 1/Ω * MultiScale.g◫_operator(cv_u, ae)
         κ◫ -= 1/I * MultiScale.κ◫_operator(cv_u, ae, coords)
-
+        
+        _xcenter, _zcenter = integrate_volume_check(cv_u, coords)
+        xcenter += _xcenter
+        zcenter += _zcenter
     end
 
-    return u◫, w◫, θ◫, h◫, g◫, κ◫
+    return u◫, w◫, θ◫, h◫, g◫, κ◫, xcenter, zcenter
 end

@@ -36,7 +36,6 @@ function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVect
         else
             σ, C, state[iqp] = material_response(material, ε, state[iqp])
         end
-        
         for i in 1:getnbasefunctions(cv_u)
             ∇Ni = shape_gradient(cv_u, iqp, i)
             f[i] += (σ ⊡ ∇Ni) * dV
@@ -49,6 +48,81 @@ function integrate_fuu2!(ke::Matrix{Float64}, f::Vector{Float64}, cv_u::CellVect
 
 end
 
+function integrate_!(
+    ke_uu::Matrix{Float64}, 
+    ke_ξu::Matrix{Float64}, 
+    ke_ξξ::Matrix{Float64}, 
+    fu::Vector{Float64}, 
+    fξ::Vector{Float64}, 
+    coords::Vector{Vec{dim,Float64}}, 
+    cv_u::CellVectorValues{dim}, 
+    material::MaterialModels.AbstractMaterial, 
+    state::Vector{<:MaterialModels.AbstractMaterialState}, 
+    ae::Vector{T}) where {dim,T}
+    
+    e1, e2, e3 = basevec(Vec{dim,Float64})
+    Î = (e1⊗e1) + (e2⊗e2)
+    x̄ = zero(Vec{dim,Float64})
+
+    δεκ = zeros(SymmetricTensor{2,3}, 3)
+    shape_function_kappa = [
+        SymmetricTensor{2,3,Float64,6}((1.0,0.0,0.0, 0.0,0.0, 0.0)),
+        SymmetricTensor{2,3,Float64,6}((0.0,1.0,0.0, 0.0,0.0, 0.0)),
+        SymmetricTensor{2,3,Float64,6}((0.0,0.0,0.0, 1.0,0.0, 0.0))
+    ]
+
+    udofs = 1:getnbasefunctions(cv_u)
+    κdofs = (1:3) .+ getnquadpoints(cv_u)
+
+    for iqp in 1:getnquadpoints(cv_u)
+        
+        dV = getdetJdV(cv_u, iqp)
+        x = spatial_coordinate(cv_u, iqp, coords)
+        ∇u = function_gradient(cv_u, iqp, ae)
+        ε = symmetric(∇u)
+        
+        x̂ = Î ⋅ x
+
+        σ, C, state[iqp] = material_response(material, ε, state[iqp])
+        for i in 1:3
+            Nκ = shape_function_kappa[i]
+            ∇uκ = (Î ⋅ Nκ ⋅ (x̂ - x̄)) ⊗ e3
+            δεκ[i] = symmetric(∇uκ)
+        end
+
+        for (i,I) in pairs(udofs)
+            δεi = (shape_gradient(cv_u, iqp, i))
+            fu[i] += (σ ⊡ δεi) * dV
+            for (j,J) in pairs(udofs)
+                Δεj = (shape_gradient(cv_u, iqp, j))
+                ke_uu[i,j] += (Δεj ⊡ C ⊡ δεi) * dV
+            end
+
+            #=for (j,J) in pairs(κdofs)
+                Δεκj = δεκ[j]
+                ke_uξ[i,j] += (Δεκj ⊡ C ⊡ δεi) * dV
+            end=#
+        end 
+
+        
+        for (i,I) in pairs(κdofs)
+            δεκi = δεκ[i]
+            fξ[i] += (σ ⊡ δεκi) * dV
+            for (j,J) in pairs(udofs)
+                Δεj = symmetric(shape_gradient(cv_u, iqp, j))
+                ke_ξu[i,j] += (Δεj ⊡ C ⊡ δεκi) * dV
+            end
+
+            for (j,J) in pairs(κdofs)
+                δεκj = δεκ[j]
+                ke_ξξ[i,j] += (δεκj ⊡ C ⊡ δεκi) * dV
+            end
+        end 
+        
+
+    end
+
+end
 
 function integrate_fλu!(result::DiffResult, y::Vector{T}, cv_u::CellVectorValues, ae::Vector{Float64}, dir::Int) where T
     f!(y, ae) = fλu!(y, cv_u, ae, dir)
@@ -172,23 +246,42 @@ function integrate_fμu_2!(ke::Matrix{T}, f::Vector{T}, cv_u::FaceVectorValues, 
     
 end
 
-function integrate_rhs!(f::Vector{Float64}, cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, X::Vector{Vec{dim,T}}, ∇uᴹ::Function) where {dim,T}
+function integrate_rhs!(fu::Vector{Float64}, fξ::Vector{Float64}, cv_u::CellVectorValues{dim}, material::MaterialModels.AbstractMaterial, state::Vector{<:MaterialModels.AbstractMaterialState}, X::Vector{Vec{dim,T}}, ∇uᴹ::Function) where {dim,T}
+    e1, e2, e3 = basevec(Vec{dim,Float64})
+    Î = (e1⊗e1) + (e2⊗e2)
+    x̄ = zero(Vec{dim,Float64})
+
+    δεξ = zeros(SymmetricTensor{2,3}, 3)
+    shape_function_kappa = [
+        SymmetricTensor{2,3,Float64,6}((1.0,0.0,0.0, 0.0,0.0, 0.0)),
+        SymmetricTensor{2,3,Float64,6}((0.0,1.0,0.0, 0.0,0.0, 0.0)),
+        SymmetricTensor{2,3,Float64,6}((0.0,0.0,0.0, 1.0,0.0, 0.0))
+    ]
     for iqp in 1:getnquadpoints(cv_u)
         
         dV = getdetJdV(cv_u, iqp)
         
         x = spatial_coordinate(cv_u, iqp, X)
         εᴹ = symmetric(∇uᴹ(x))
+
+        σ, C, state[iqp] = material_response(material, εᴹ, state[iqp])
         
-        if dim == 2
-            σ, C, state[iqp] = material_response(PlaneStrain(), material, εᴹ, state[iqp])
-        else
-            σ, C, state[iqp] = material_response(material, εᴹ, state[iqp])
+        x̂ = Î ⋅ x
+
+        for i in 1:3
+            Nκ = shape_function_kappa[i]
+            ∇uκ = (Î ⋅ Nκ ⋅ (x̂ - x̄)) ⊗ e3
+            δεξ[i] = symmetric(∇uκ)
         end
-        
+
         for i in 1:getnbasefunctions(cv_u)
             ∇Ni = shape_gradient(cv_u, iqp, i)
-            f[i] += (-∇Ni ⊡ σ ) * dV
+            fu[i] += (-∇Ni ⊡ σ ) * dV
+        end 
+
+        for i in 1:3
+            ∇Nξi = δεξ[i]
+            fξ[i] += (-∇Nξi ⊡ σ ) * dV
         end 
     end
 
@@ -216,8 +309,10 @@ function integrate_fμ_ext!(f::Vector{T}, cv_u::FaceVectorValues, ip_μ::Ferrite
     end  
 end
 
-function integrate_checks(val1::Vector{Float64}, val2::Vector{Float64}, cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}}) where {dim}
+function integrate_volume_check(cv_u::CellVectorValues, X::Vector{Vec{dim,Float64}}) where {dim}
 
+    val1 = 0.0
+    val2 = 0.0
     for iqp in 1:getnquadpoints(cv_u)
  
         dV = getdetJdV(cv_u, iqp)
@@ -225,10 +320,10 @@ function integrate_checks(val1::Vector{Float64}, val2::Vector{Float64}, cv_u::Ce
         xₚ  = Vec{dim-1}(i -> xyz[i])
         z = xyz[dim]
         
-        val1[1] += (xₚ[1]) * dV
-        val2[1] += (z) * dV
+        val1 += (xₚ[1]) * dV
+        val2 += (z) * dV
     end
-
+    return val1, val2
 end
 
 function u◫_operator(cv_u::CellVectorValues{dim}, ae::Vector{T}) where {dim,T}
