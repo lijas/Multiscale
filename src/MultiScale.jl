@@ -903,7 +903,7 @@ function _solve_it_schur!(rve::RVE, state::State)
     condense_rhs!(Ct, ch) 
     
     RHS[:, 1] .= fext_u
-    RHS[:, (1:nλμdofs) .+ 1] .= -Ct
+    RHS[:, (1:(nλμdofs+nξdofs)) .+ 1] .= -Ct
 
 
     if rve.linearsolver === nothing
