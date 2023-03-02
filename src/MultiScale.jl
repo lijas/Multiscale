@@ -313,8 +313,8 @@ function RVE(;
     PRECON  = IterativeSolvers.Identity,
     LOCK_NODE = false) where dim
 
-    if LOCK_NODE 
-        SOLVE_STYLE == SOLVE_SCHUR && error("Can not solve with schure compliment if node is not locked.")
+    if LOCK_NODE == false && SOLVE_STYLE == SOLVE_SCHUR
+        error("Can not solve with schure compliment if node is not locked.")
     end
 
     #Get size of rve
