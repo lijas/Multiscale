@@ -179,7 +179,7 @@ end
 
 
 
-function check_asdf(rve::RVE{dim}, a_fluct) where {dim}
+function run_checks(rve::RVE{dim}, a_fluct) where {dim}
 
     (; dh, grid, cv_u) = rve
 

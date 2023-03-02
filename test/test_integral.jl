@@ -79,11 +79,11 @@ end
     diffresult_u = MultiScale.integrate_fuu!(cache.diffresult_u, cache.fu, rve.cv_u, material, mstates, ae);
     ke = DiffResults.jacobian(cache.diffresult_u)
     
-    fill!(cache.ke, 0.0)
+    fill!(cache.ke_uu, 0.0)
     fill!(cache.fu, 0.0)
-    MultiScale.integrate_fuu2!(cache.ke, cache.fu, rve.cv_u, material, mstates, ae);
+    MultiScale.integrate_fuu2!(cache.ke_uu, cache.fu, rve.cv_u, material, mstates, ae);
 
-    @test (cache.ke ≈ ke) |> all
+    @test (cache.ke_uu ≈ ke) |> all
 
     #
     diffresult_μ = MultiScale.integrate_fμu!(cache.diffresult_μ, cache.fμ, rve.fv_u, rve.ip_μ, coords, ae);

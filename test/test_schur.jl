@@ -15,7 +15,7 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
     addnodeset!(grid, "cornerset", (x) -> x ≈ corner)
 
 
-    material = LinearElastic(E = 210.0, ν = 0.0 )
+    material = LinearElastic(E = 210.0, ν = 0.3 )
 
     rve = MultiScale.RVE(;
         grid, 
@@ -25,26 +25,34 @@ function _build_rve(L◫, h, macroscale::MultiScale.MacroParameters{dimm1}) wher
                 cellset = 1:getncells(grid) |> collect
             )],
         BC_TYPE = MultiScale.STRONG_PERIODIC(),
-        SOLVE_FOR_FLUCT = false
+        LOCK_NODE = true,
     )
 
     state = State(rve)
 
     MultiScale._apply_macroscale!(rve, macroscale, state)
     MultiScale._assemble_volume!(rve, macroscale, state)
-    
+    MultiScale.evaluate_uᴹ!(rve.matrices.uM, rve, macroscale)
+
+    #
+    # FULL
+    #
     state2 = State(rve)
     MultiScale._solve_it_full!(rve, state2)
-    
+    state2.a[1:rve.nudofs] .+= rve.matrices.uM
+
+    _,_,Mfull, _ = MultiScale.calculate_response(rve, state2, false);
+
+    #
+    # SCHUR
+    #
     state1 = State(rve)
     MultiScale._solve_it_schur!(rve, state1)
+    state1.a[1:rve.nudofs] .+= rve.matrices.uM
+    _,_,Mschur, _ = MultiScale.calculate_response(rve, state1, false);
     
     
-    @test isapprox(norm(state1.a), norm(state2.a), atol = 1e-4)
-
-    #N,V,M = MultiScale.calculate_response(rve, state)
-
-    #return N,V,M 
+    @test isapprox.(Mschur, Mfull, atol = 1e-4) |> all
 
 end
 
@@ -52,8 +60,8 @@ end
 @testset "Test schur" begin 
     macroscale = MultiScale.MacroParameters{2}(
         ∇u = Tensor{2,2}((0.0, 0.0, 0.0, 0.0)), 
-        ∇w = Vec{2}((0.01, 0.0)), 
-        ∇θ = Tensor{2,2}((0.0, 0.0, 0.0, 0.0)), 
+        ∇w = Vec{2}((0.0, 0.0)), 
+        ∇θ = Tensor{2,2}((1.0, 0.0, 0.0, 0.0)), 
         w = 0.0, 
         θ = Vec{2}((0.0,0.0))
     )

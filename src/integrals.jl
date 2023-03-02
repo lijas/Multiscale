@@ -72,7 +72,7 @@ function integrate_!(
     ]
 
     udofs = 1:getnbasefunctions(cv_u)
-    κdofs = (1:3) .+ getnquadpoints(cv_u)
+    κdofs = (1:length(fξ)) #.+ getnbasefunctions(cv_u)
 
     for iqp in 1:getnquadpoints(cv_u)
         
@@ -257,6 +257,9 @@ function integrate_rhs!(fu::Vector{Float64}, fξ::Vector{Float64}, cv_u::CellVec
         SymmetricTensor{2,3,Float64,6}((0.0,1.0,0.0, 0.0,0.0, 0.0)),
         SymmetricTensor{2,3,Float64,6}((0.0,0.0,0.0, 1.0,0.0, 0.0))
     ]
+    udofs = 1:getnbasefunctions(cv_u)
+    κdofs = (1:length(fξ))# .+ getnbasefunctions(cv_u)
+
     for iqp in 1:getnquadpoints(cv_u)
         
         dV = getdetJdV(cv_u, iqp)
@@ -268,18 +271,18 @@ function integrate_rhs!(fu::Vector{Float64}, fξ::Vector{Float64}, cv_u::CellVec
         
         x̂ = Î ⋅ x
 
-        for i in 1:3
+        for i in κdofs
             Nκ = shape_function_kappa[i]
             ∇uκ = (Î ⋅ Nκ ⋅ (x̂ - x̄)) ⊗ e3
             δεξ[i] = symmetric(∇uκ)
         end
 
-        for i in 1:getnbasefunctions(cv_u)
+        for i in udofs
             ∇Ni = shape_gradient(cv_u, iqp, i)
             fu[i] += (-∇Ni ⊡ σ ) * dV
         end 
 
-        for i in 1:3
+        for i in κdofs
             ∇Nξi = δεξ[i]
             fξ[i] += (-∇Nξi ⊡ σ ) * dV
         end 
